@@ -257,15 +257,10 @@ class ChitEnrollmentSerializer(serializers.ModelSerializer):
                 })
 
         # Non-member validation
-        guarantor1_non = attrs.get('guarantor1_non_member_name')
         if not member:
             if not non_member_name:
                 raise serializers.ValidationError({
                     'non_member_name': 'Either a Member or a Non-Member Name is required.'
-                })
-            if not guarantor1 and not guarantor1_non:
-                raise serializers.ValidationError({
-                    'guarantor1': 'At least Guarantor 1 (Member or Non-Member) is required for enrolling a non-member.'
                 })
             if guarantor1 and guarantor2 and guarantor1 == guarantor2:
                 raise serializers.ValidationError({

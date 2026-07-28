@@ -302,7 +302,7 @@ const WelfarePage = () => {
       is_registered_member: true,
       ticket_number: nextTicket,
       enrollment_date: dayjs(),
-      guarantor1_type: 'member',
+      guarantor1_type: 'none',
       guarantor2_type: 'none',
       initial_paid_months: 0,
     })
@@ -366,17 +366,31 @@ const WelfarePage = () => {
       // Guarantor 1
       if (values.guarantor1_type === 'member') {
         payload.guarantor1 = values.guarantor1
+        payload.guarantor1_non_member_name = ''
+        payload.guarantor1_non_member_phone = ''
       } else if (values.guarantor1_type === 'non_member') {
+        payload.guarantor1 = null
         payload.guarantor1_non_member_name = values.guarantor1_non_member_name
         payload.guarantor1_non_member_phone = values.guarantor1_non_member_phone
+      } else {
+        payload.guarantor1 = null
+        payload.guarantor1_non_member_name = ''
+        payload.guarantor1_non_member_phone = ''
       }
 
       // Guarantor 2
       if (values.guarantor2_type === 'member') {
         payload.guarantor2 = values.guarantor2
+        payload.guarantor2_non_member_name = ''
+        payload.guarantor2_non_member_phone = ''
       } else if (values.guarantor2_type === 'non_member') {
+        payload.guarantor2 = null
         payload.guarantor2_non_member_name = values.guarantor2_non_member_name
         payload.guarantor2_non_member_phone = values.guarantor2_non_member_phone
+      } else {
+        payload.guarantor2 = null
+        payload.guarantor2_non_member_name = ''
+        payload.guarantor2_non_member_phone = ''
       }
 
       await chitsApi.enrollMember(selectedGroup.id, payload)
@@ -1367,7 +1381,7 @@ const WelfarePage = () => {
             type="info" showIcon style={{ marginBottom: 16 }}
           />
         )}
-        <Form form={enrollForm} layout="vertical" onFinish={handleEnrollMember} onSubmit={(e) => e.preventDefault()} initialValues={{ is_registered_member: true, guarantor1_type: 'member', guarantor2_type: 'none', initial_paid_months: 0 }}>
+        <Form form={enrollForm} layout="vertical" onFinish={handleEnrollMember} onSubmit={(e) => e.preventDefault()} initialValues={{ is_registered_member: true, guarantor1_type: 'none', guarantor2_type: 'none', initial_paid_months: 0 }}>
           <Form.Item
             label="Is Registered Member?"
             name="is_registered_member"
@@ -1430,26 +1444,29 @@ const WelfarePage = () => {
 
           <Form.Item label="Guarantor 1 Type" name="guarantor1_type">
             <Select onChange={() => enrollForm.setFieldsValue({ guarantor1: undefined, guarantor1_non_member_name: '', guarantor1_non_member_phone: '' })}>
+              <Option value="none">None</Option>
               <Option value="member">Registered Member</Option>
               <Option value="non_member">Non-Member (External Person)</Option>
             </Select>
           </Form.Item>
 
-          {guarantor1Type === 'non_member' ? (
+          {guarantor1Type === 'non_member' && (
             <Row gutter={8}>
               <Col span={12}>
-                <Form.Item label="Guarantor 1 Name" name="guarantor1_non_member_name" rules={[{ required: true, message: 'Guarantor 1 name required' }]}>
+                <Form.Item label="Guarantor 1 Name" name="guarantor1_non_member_name">
                   <Input placeholder="Full name" />
                 </Form.Item>
               </Col>
               <Col span={12}>
-                <Form.Item label="Guarantor 1 Phone" name="guarantor1_non_member_phone" rules={[{ required: true, message: 'Guarantor 1 phone required' }]}>
+                <Form.Item label="Guarantor 1 Phone" name="guarantor1_non_member_phone">
                   <Input placeholder="Phone number" />
                 </Form.Item>
               </Col>
             </Row>
-          ) : (
-            <Form.Item label="Guarantor 1 (Member)" name="guarantor1" rules={[{ required: isRegisteredMember === false, message: 'Guarantor 1 is required' }]}>
+          )}
+
+          {guarantor1Type === 'member' && (
+            <Form.Item label="Guarantor 1 (Member)" name="guarantor1">
               <Select
                 showSearch
                 loading={membersLoading}
