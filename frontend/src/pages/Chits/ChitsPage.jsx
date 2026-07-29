@@ -257,7 +257,7 @@ const WelfarePage = () => {
   const loadMembersForSelect = useCallback(async (search = '') => {
     setMembersLoading(true)
     try {
-      const res = await membersApi.getMembers({ search, status: 'active', page_size: 100 })
+      const res = await membersApi.getMembers({ search, page_size: 100 })
       setMembers(res.data.results || res.data)
     } catch (_) {}
     setMembersLoading(false)
