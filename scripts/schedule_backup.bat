@@ -27,7 +27,7 @@ echo Command target: %BACKUP_SCRIPT%
 echo.
 
 :: Create the scheduled task
-schtasks /create /tn "KVVA_Database_Backup" /tr "\"%BACKUP_SCRIPT%\"" /sc daily /st %BACKUP_TIME% /f
+schtasks /create /tn "KVVA_Database_Backup" /tr "\"%BACKUP_SCRIPT%\" --scheduled" /sc daily /st %BACKUP_TIME% /f
 
 if %errorlevel% equ 0 (
     echo.

@@ -17,11 +17,11 @@ if exist venv\Scripts\python.exe (
 if %errorlevel% neq 0 (
     echo.
     echo ERROR: Backup process failed!
-    pause
+    if "%1" neq "--scheduled" pause
     exit /b 1
 )
 
 echo.
 echo Database backup process completed successfully.
 echo.
-pause
+if "%1" neq "--scheduled" pause
