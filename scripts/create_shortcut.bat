@@ -23,6 +23,13 @@ echo Shortcut.TargetPath = "wscript.exe" >> "%temp%\create_shortcut.vbs"
 echo Shortcut.Arguments = """%TARGET_VBS%""" >> "%temp%\create_shortcut.vbs"
 echo Shortcut.WorkingDirectory = "%~dp0" >> "%temp%\create_shortcut.vbs"
 echo Shortcut.Description = "Launch KVVES Management System" >> "%temp%\create_shortcut.vbs"
+if exist "%~dp0app_icon.ico" (
+    echo Shortcut.IconLocation = "%~dp0app_icon.ico" >> "%temp%\create_shortcut.vbs"
+) else if exist "%~dp0..\app_icon.ico" (
+    echo Shortcut.IconLocation = "%~dp0..\app_icon.ico" >> "%temp%\create_shortcut.vbs"
+) else (
+    echo Shortcut.IconLocation = "shell32.dll, 85" >> "%temp%\create_shortcut.vbs"
+)
 echo Shortcut.Save >> "%temp%\create_shortcut.vbs"
 
 cscript //nologo "%temp%\create_shortcut.vbs"
