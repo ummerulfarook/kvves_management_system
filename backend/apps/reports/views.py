@@ -319,7 +319,15 @@ class OverdueListView(APIView):
         from apps.members.models import Member
         from dateutil.relativedelta import relativedelta
 
-        today = timezone.now().date()
+        date_str = request.query_params.get('date')
+        if date_str:
+            try:
+                import datetime
+                today = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
+            except ValueError:
+                today = timezone.now().date()
+        else:
+            today = timezone.now().date()
         overdue_result = []
         upcoming_result = []
 
@@ -685,4 +693,117 @@ class PeriodReportView(APIView):
             'new_loans': new_loans,
             'new_loans_amount': str(new_loans_amount),
         })
+
+
+class WelfarePaymentsReportView(APIView):
+    """GET /api/reports/welfare-payments/ — customized reports of welfare payments."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from apps.chits.models import ChitPayment
+        import datetime
+        
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        member_id = request.query_params.get('member')
+        group_id = request.query_params.get('chit_group')
+        status = request.query_params.get('status')
+        
+        qs = ChitPayment.objects.select_related(
+            'enrollment__member', 'enrollment__chit_group'
+        ).order_by('due_date')
+        
+        if start_date:
+            qs = qs.filter(due_date__gte=start_date)
+        if end_date:
+            qs = qs.filter(due_date__lte=end_date)
+        if member_id:
+            qs = qs.filter(enrollment__member_id=member_id)
+        if group_id:
+            qs = qs.filter(enrollment__chit_group_id=group_id)
+            
+        today = timezone.now().date()
+        if status == 'paid':
+            qs = qs.filter(is_paid=True)
+        elif status == 'pending':
+            qs = qs.filter(is_paid=False)
+        elif status == 'overdue':
+            qs = qs.filter(is_paid=False, due_date__lt=today)
+            
+        data = []
+        for p in qs:
+            name = p.enrollment.member.full_name if p.enrollment.member else p.enrollment.non_member_name
+            no = p.enrollment.member.member_no if p.enrollment.member else 'Non-Member'
+            data.append({
+                'id': p.id,
+                'member_name': name,
+                'member_no': no,
+                'group_name': p.enrollment.chit_group.group_name,
+                'group_no': p.enrollment.chit_group.group_no,
+                'month_number': p.month_number,
+                'installment_amount': str(p.installment_amount),
+                'amount_paid': str(p.amount_paid),
+                'due_date': p.due_date.isoformat(),
+                'paid_date': p.paid_date.isoformat() if p.paid_date else None,
+                'payment_mode': p.payment_mode,
+                'receipt_no': p.receipt_no,
+                'is_paid': p.is_paid,
+                'is_overdue': not p.is_paid and p.due_date < today,
+                'days_overdue': (today - p.due_date).days if (not p.is_paid and p.due_date < today) else 0,
+            })
+            
+        return Response({'results': data})
+
+
+class LoanRepaymentsReportView(APIView):
+    """GET /api/reports/loan-repayments/ — customized reports of loan repayments."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from apps.loans.models import LoanRepayment
+        import datetime
+        
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        member_id = request.query_params.get('member')
+        status = request.query_params.get('status')
+        
+        qs = LoanRepayment.objects.select_related(
+            'loan__member'
+        ).order_by('due_date')
+        
+        if start_date:
+            qs = qs.filter(due_date__gte=start_date)
+        if end_date:
+            qs = qs.filter(due_date__lte=end_date)
+        if member_id:
+            qs = qs.filter(loan__member_id=member_id)
+            
+        today = timezone.now().date()
+        if status == 'paid':
+            qs = qs.filter(is_paid=True)
+        elif status == 'pending':
+            qs = qs.filter(is_paid=False)
+        elif status == 'overdue':
+            qs = qs.filter(is_paid=False, due_date__lt=today)
+            
+        data = []
+        for r in qs:
+            data.append({
+                'id': r.id,
+                'member_name': r.loan.member.full_name,
+                'member_no': r.loan.member.member_no,
+                'loan_no': r.loan.loan_no,
+                'instalment_no': r.instalment_no,
+                'amount_paid': str(r.loan.emi_amount) if not r.is_paid else str(r.amount_paid),
+                'due_date': r.due_date.isoformat(),
+                'paid_date': r.paid_date.isoformat() if r.paid_date else None,
+                'payment_mode': r.payment_mode,
+                'receipt_no': r.receipt_no,
+                'is_paid': r.is_paid,
+                'is_overdue': not r.is_paid and r.due_date < today,
+                'days_overdue': (today - r.due_date).days if (not r.is_paid and r.due_date < today) else 0,
+            })
+            
+        return Response({'results': data})
 

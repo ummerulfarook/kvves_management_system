@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Row, Col, Card, Table, Typography, Tag, Tabs, Spin, Statistic, Space,
-  DatePicker, Segmented, Button, Divider, message, Input, Modal, Radio,
+  DatePicker, Segmented, Button, Divider, message, Input, Modal, Radio, Select,
 } from 'antd'
 import {
   TeamOutlined, BankOutlined, CreditCardOutlined, WarningOutlined,
@@ -14,12 +14,13 @@ import {
 } from 'recharts'
 import dayjs from 'dayjs'
 import * as reportsApi from '../../api/reports'
-import { exportOverdue, exportPeriodReport, downloadBlob } from '../../api/imports'
+import { exportOverdue, exportPeriodReport, downloadBlob, exportWelfareReport, exportLoanReport } from '../../api/imports'
 import { formatCurrency, formatDate } from '../../utils/formatters'
 import ExportButton from '../../components/ExportButton'
 import StatusBadge from '../../components/StatusBadge'
 
 const { Title, Text } = Typography
+const { Option } = Select
 
 const COLORS = ['#2563eb', '#7c3aed', '#0891b2', '#d97706', '#ef4444', '#ec4899', '#14b8a6']
 
@@ -731,6 +732,489 @@ const PeriodReport = () => {
 }
 
 // ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// Welfare Report sub-component
+// ─────────────────────────────────────────────────────────────
+const WelfareReport = ({ chitsSummary }) => {
+  const [dateRange, setDateRange] = useState([dayjs().subtract(3, 'month'), dayjs().add(1, 'month')])
+  const [selectedMember, setSelectedMember] = useState(null)
+  const [selectedGroup, setSelectedGroup] = useState(null)
+  const [status, setStatus] = useState('all')
+  const [members, setMembers] = useState([])
+  const [membersLoading, setMembersLoading] = useState(false)
+  const [results, setResults] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [downloading, setDownloading] = useState(false)
+
+  const loadMembers = async (search = '') => {
+    setMembersLoading(true)
+    try {
+      const res = await membersApi.getMembers({ search, page_size: 100 })
+      setMembers(res.data.results || res.data)
+    } catch (_) {}
+    setMembersLoading(false)
+  }
+
+  useEffect(() => {
+    loadMembers()
+  }, [])
+
+  const fetchReport = async () => {
+    setLoading(true)
+    try {
+      const params = { status }
+      if (dateRange && dateRange[0] && dateRange[1]) {
+        params.start_date = dateRange[0].format('YYYY-MM-DD')
+        params.end_date = dateRange[1].format('YYYY-MM-DD')
+      }
+      if (selectedMember) params.member = selectedMember
+      if (selectedGroup) params.chit_group = selectedGroup
+      
+      const res = await reportsApi.getWelfarePaymentsReport(params)
+      setResults(res.data.results || [])
+    } catch (_) {
+      message.error('Failed to generate welfare report.')
+    }
+    setLoading(false)
+  }
+
+  const handleDownload = async () => {
+    setDownloading(true)
+    try {
+      const params = { status }
+      if (dateRange && dateRange[0] && dateRange[1]) {
+        params.start_date = dateRange[0].format('YYYY-MM-DD')
+        params.end_date = dateRange[1].format('YYYY-MM-DD')
+      }
+      if (selectedMember) params.member = selectedMember
+      if (selectedGroup) params.chit_group = selectedGroup
+
+      const res = await exportWelfareReport(params)
+      downloadBlob(res.data, `welfare_report_${dayjs().format('YYYY-MM-DD')}.xlsx`)
+    } catch (_) {
+      message.error('Failed to export Excel report.')
+    }
+    setDownloading(false)
+  }
+
+  const handlePrint = () => {
+    const printWindow = window.open('', '_blank', 'width=900,height=600')
+    const dateLabel = new Date().toLocaleDateString('en-IN')
+    const dateRangeLabel = dateRange && dateRange[0] && dateRange[1] 
+      ? `${dateRange[0].format('DD/MM/YYYY')} to ${dateRange[1].format('DD/MM/YYYY')}` 
+      : 'All Time'
+
+    const rows = results.map((item, idx) => {
+      const itemStatus = item.is_paid ? 'Paid' : (item.is_overdue ? 'Overdue' : 'Pending')
+      const color = item.is_paid ? 'green' : (item.is_overdue ? 'red' : 'black')
+      return `
+        <tr>
+          <td>${idx + 1}</td>
+          <td><strong>${item.member_name}</strong> (${item.member_no})</td>
+          <td>${item.group_name}</td>
+          <td>Month ${item.month_number}</td>
+          <td>₹${parseFloat(item.installment_amount).toFixed(2)}</td>
+          <td>₹${parseFloat(item.amount_paid).toFixed(2)}</td>
+          <td>${formatDate(item.due_date)}</td>
+          <td>${item.paid_date ? formatDate(item.paid_date) : '—'}</td>
+          <td style="color: ${color}; font-weight: bold;">${itemStatus}</td>
+        </tr>
+      `
+    }).join('')
+
+    const totalDue = results.reduce((sum, item) => sum + parseFloat(item.installment_amount || 0), 0)
+    const totalPaid = results.reduce((sum, item) => sum + parseFloat(item.amount_paid || 0), 0)
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Welfare Fund Payments Report</title>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; color: #333; }
+            h1 { font-size: 20px; margin-bottom: 5px; }
+            .meta { font-size: 12px; color: #666; margin-bottom: 20px; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; font-size: 12px; }
+            th { background-color: #f5f5f5; font-weight: bold; }
+            .total-row { font-weight: bold; background-color: #f9fafb; }
+          </style>
+        </head>
+        <body>
+          <h1 style="font-family: 'Noto Sans Malayalam', sans-serif;">കേരള വ്യാപാരി വ്യവസായി ഏകോപന സമിതി Azhikode Paybazar Unit (Reg No. 262/81)</h1>
+          <div style="font-weight: bold; font-size: 14px; margin-bottom: 10px;">WELFARE FUND PAYMENTS REPORT</div>
+          <div class="meta">
+            <strong>Date Range:</strong> ${dateRangeLabel} | <strong>Generated:</strong> ${dateLabel} | <strong>Total Records:</strong> ${results.length}
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Member</th>
+                <th>Welfare Scheme</th>
+                <th>Month</th>
+                <th>Required (₹)</th>
+                <th>Paid (₹)</th>
+                <th>Due Date</th>
+                <th>Paid Date</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows}
+              <tr class="total-row">
+                <td colspan="4" style="text-align: right;">Total:</td>
+                <td>₹${totalDue.toFixed(2)}</td>
+                <td>₹${totalPaid.toFixed(2)}</td>
+                <td colspan="3"></td>
+              </tr>
+            </tbody>
+          </table>
+          <script>
+            window.onload = function() {
+              window.print();
+              window.onafterprint = function() { window.close(); }
+            }
+          </script>
+        </body>
+      </html>
+    `)
+    printWindow.document.close()
+  }
+
+  return (
+    <div>
+      <Card style={{ marginBottom: 16, background: '#fafafa' }} bodyStyle={{ padding: 16 }}>
+        <Row gutter={[16, 16]} align="middle">
+          <Col xs={24} sm={12} md={6}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 4 }}>Date Range</div>
+            <DatePicker.RangePicker
+              value={dateRange}
+              onChange={setDateRange}
+              format="DD/MM/YYYY"
+              style={{ width: '100%' }}
+            />
+          </Col>
+          <Col xs={24} sm={12} md={6}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 4 }}>Filter Member</div>
+            <Select
+              showSearch
+              placeholder="All Members"
+              allowClear
+              value={selectedMember}
+              onChange={setSelectedMember}
+              filterOption={false}
+              onSearch={loadMembers}
+              style={{ width: '100%' }}
+            >
+              {members.map(m => (
+                <Option key={m.id} value={m.id}>{m.full_name} ({m.member_no})</Option>
+              ))}
+            </Select>
+          </Col>
+          <Col xs={24} sm={12} md={6}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 4 }}>Welfare Scheme</div>
+            <Select
+              placeholder="All Schemes"
+              allowClear
+              value={selectedGroup}
+              onChange={setSelectedGroup}
+              style={{ width: '100%' }}
+            >
+              {(chitsSummary?.by_group || []).map(g => (
+                <Option key={g.group_no} value={g.group_no}>{g.group_name}</Option>
+              ))}
+            </Select>
+          </Col>
+          <Col xs={24} sm={12} md={6}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 4 }}>Status</div>
+            <Select
+              value={status}
+              onChange={setStatus}
+              style={{ width: '100%' }}
+            >
+              <Option value="all">All Payments</Option>
+              <Option value="paid">Paid</Option>
+              <Option value="pending">Pending</Option>
+              <Option value="overdue">Overdue</Option>
+            </Select>
+          </Col>
+          <Col xs={24} style={{ textAlign: 'right', marginTop: 8 }}>
+            <Space>
+              <Button type="primary" onClick={fetchReport} loading={loading}>
+                Generate Report
+              </Button>
+              {results.length > 0 && (
+                <>
+                  <Button type="default" onClick={handlePrint}>
+                    Print Report
+                  </Button>
+                  <Button type="default" onClick={handleDownload} loading={downloading}>
+                    Export Excel
+                  </Button>
+                </>
+              )}
+            </Space>
+          </Col>
+        </Row>
+      </Card>
+
+      <Table
+        dataSource={results}
+        rowKey="id"
+        size="small"
+        pagination={{ pageSize: 20 }}
+        loading={loading}
+        columns={[
+          { title: 'Member', key: 'member', render: (_, r) => <span>{r.member_name} ({r.member_no})</span> },
+          { title: 'Scheme', dataIndex: 'group_name' },
+          { title: 'Month', dataIndex: 'month_number', render: v => `Month ${v}` },
+          { title: 'Required', dataIndex: 'installment_amount', render: v => formatCurrency(v) },
+          { title: 'Paid', dataIndex: 'amount_paid', render: v => formatCurrency(v) },
+          { title: 'Due Date', dataIndex: 'due_date', render: v => formatDate(v) },
+          { title: 'Paid Date', dataIndex: 'paid_date', render: v => v ? formatDate(v) : '—' },
+          {
+            title: 'Status', key: 'status',
+            render: (_, r) => r.is_paid 
+              ? <Tag color="success">Paid</Tag>
+              : (r.is_overdue ? <Tag color="error">Overdue ({r.days_overdue}d)</Tag> : <Tag color="default">Pending</Tag>)
+          }
+        ]}
+      />
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────
+// Loan Report sub-component
+// ─────────────────────────────────────────────────────────────
+const LoanReport = () => {
+  const [dateRange, setDateRange] = useState([dayjs().subtract(3, 'month'), dayjs().add(1, 'month')])
+  const [selectedMember, setSelectedMember] = useState(null)
+  const [status, setStatus] = useState('all')
+  const [members, setMembers] = useState([])
+  const [membersLoading, setMembersLoading] = useState(false)
+  const [results, setResults] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [downloading, setDownloading] = useState(false)
+
+  const loadMembers = async (search = '') => {
+    setMembersLoading(true)
+    try {
+      const res = await membersApi.getMembers({ search, page_size: 100 })
+      setMembers(res.data.results || res.data)
+    } catch (_) {}
+    setMembersLoading(false)
+  }
+
+  useEffect(() => {
+    loadMembers()
+  }, [])
+
+  const fetchReport = async () => {
+    setLoading(true)
+    try {
+      const params = { status }
+      if (dateRange && dateRange[0] && dateRange[1]) {
+        params.start_date = dateRange[0].format('YYYY-MM-DD')
+        params.end_date = dateRange[1].format('YYYY-MM-DD')
+      }
+      if (selectedMember) params.member = selectedMember
+      
+      const res = await reportsApi.getLoanRepaymentsReport(params)
+      setResults(res.data.results || [])
+    } catch (_) {
+      message.error('Failed to generate loan report.')
+    }
+    setLoading(false)
+  }
+
+  const handleDownload = async () => {
+    setDownloading(true)
+    try {
+      const params = { status }
+      if (dateRange && dateRange[0] && dateRange[1]) {
+        params.start_date = dateRange[0].format('YYYY-MM-DD')
+        params.end_date = dateRange[1].format('YYYY-MM-DD')
+      }
+      if (selectedMember) params.member = selectedMember
+
+      const res = await exportLoanReport(params)
+      downloadBlob(res.data, `loan_report_${dayjs().format('YYYY-MM-DD')}.xlsx`)
+    } catch (_) {
+      message.error('Failed to export Excel report.')
+    }
+    setDownloading(false)
+  }
+
+  const handlePrint = () => {
+    const printWindow = window.open('', '_blank', 'width=900,height=600')
+    const dateLabel = new Date().toLocaleDateString('en-IN')
+    const dateRangeLabel = dateRange && dateRange[0] && dateRange[1] 
+      ? `${dateRange[0].format('DD/MM/YYYY')} to ${dateRange[1].format('DD/MM/YYYY')}` 
+      : 'All Time'
+
+    const rows = results.map((item, idx) => {
+      const itemStatus = item.is_paid ? 'Paid' : (item.is_overdue ? 'Overdue' : 'Pending')
+      const color = item.is_paid ? 'green' : (item.is_overdue ? 'red' : 'black')
+      return `
+        <tr>
+          <td>${idx + 1}</td>
+          <td><strong>${item.member_name}</strong> (${item.member_no})</td>
+          <td>${item.loan_no}</td>
+          <td>EMI ${item.instalment_no}</td>
+          <td>₹${parseFloat(item.amount_paid).toFixed(2)}</td>
+          <td>${formatDate(item.due_date)}</td>
+          <td>${item.paid_date ? formatDate(item.paid_date) : '—'}</td>
+          <td style="color: ${color}; font-weight: bold;">${itemStatus}</td>
+        </tr>
+      `
+    }).join('')
+
+    const totalPaid = results.reduce((sum, item) => sum + parseFloat(item.amount_paid || 0), 0)
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Loan Repayments / EMI Report</title>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; color: #333; }
+            h1 { font-size: 20px; margin-bottom: 5px; }
+            .meta { font-size: 12px; color: #666; margin-bottom: 20px; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; font-size: 12px; }
+            th { background-color: #f5f5f5; font-weight: bold; }
+            .total-row { font-weight: bold; background-color: #f9fafb; }
+          </style>
+        </head>
+        <body>
+          <h1 style="font-family: 'Noto Sans Malayalam', sans-serif;">കേരള വ്യാപാരി വ്യവസായി ഏകോപന സമിതി Azhikode Paybazar Unit (Reg No. 262/81)</h1>
+          <div style="font-weight: bold; font-size: 14px; margin-bottom: 10px;">LOAN REPAYMENTS / EMI REPORT</div>
+          <div class="meta">
+            <strong>Date Range:</strong> ${dateRangeLabel} | <strong>Generated:</strong> ${dateLabel} | <strong>Total Records:</strong> ${results.length}
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Member</th>
+                <th>Loan No</th>
+                <th>EMI No</th>
+                <th>Amount (₹)</th>
+                <th>Due Date</th>
+                <th>Paid Date</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows}
+              <tr class="total-row">
+                <td colspan="4" style="text-align: right;">Total Amount:</td>
+                <td>₹${totalPaid.toFixed(2)}</td>
+                <td colspan="3"></td>
+              </tr>
+            </tbody>
+          </table>
+          <script>
+            window.onload = function() {
+              window.print();
+              window.onafterprint = function() { window.close(); }
+            }
+          </script>
+        </body>
+      </html>
+    `)
+    printWindow.document.close()
+  }
+
+  return (
+    <div>
+      <Card style={{ marginBottom: 16, background: '#fafafa' }} bodyStyle={{ padding: 16 }}>
+        <Row gutter={[16, 16]} align="middle">
+          <Col xs={24} sm={12} md={8}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 4 }}>Date Range</div>
+            <DatePicker.RangePicker
+              value={dateRange}
+              onChange={setDateRange}
+              format="DD/MM/YYYY"
+              style={{ width: '100%' }}
+            />
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 4 }}>Filter Member</div>
+            <Select
+              showSearch
+              placeholder="All Members"
+              allowClear
+              value={selectedMember}
+              onChange={setSelectedMember}
+              filterOption={false}
+              onSearch={loadMembers}
+              style={{ width: '100%' }}
+            >
+              {members.map(m => (
+                <Option key={m.id} value={m.id}>{m.full_name} ({m.member_no})</Option>
+              ))}
+            </Select>
+          </Col>
+          <Col xs={24} sm={12} md={8}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 4 }}>Status</div>
+            <Select
+              value={status}
+              onChange={setStatus}
+              style={{ width: '100%' }}
+            >
+              <Option value="all">All Repayments</Option>
+              <Option value="paid">Paid</Option>
+              <Option value="pending">Pending</Option>
+              <Option value="overdue">Overdue</Option>
+            </Select>
+          </Col>
+          <Col xs={24} style={{ textAlign: 'right', marginTop: 8 }}>
+            <Space>
+              <Button type="primary" onClick={fetchReport} loading={loading}>
+                Generate Report
+              </Button>
+              {results.length > 0 && (
+                <>
+                  <Button type="default" onClick={handlePrint}>
+                    Print Report
+                  </Button>
+                  <Button type="default" onClick={handleDownload} loading={downloading}>
+                    Export Excel
+                  </Button>
+                </>
+              )}
+            </Space>
+          </Col>
+        </Row>
+      </Card>
+
+      <Table
+        dataSource={results}
+        rowKey="id"
+        size="small"
+        pagination={{ pageSize: 20 }}
+        loading={loading}
+        columns={[
+          { title: 'Member', key: 'member', render: (_, r) => <span>{r.member_name} ({r.member_no})</span> },
+          { title: 'Loan No', dataIndex: 'loan_no' },
+          { title: 'EMI No', dataIndex: 'instalment_no', render: v => `EMI ${v}` },
+          { title: 'Amount', dataIndex: 'amount_paid', render: v => formatCurrency(v) },
+          { title: 'Due Date', dataIndex: 'due_date', render: v => formatDate(v) },
+          { title: 'Paid Date', dataIndex: 'paid_date', render: v => v ? formatDate(v) : '—' },
+          {
+            title: 'Status', key: 'status',
+            render: (_, r) => r.is_paid 
+              ? <Tag color="success">Paid</Tag>
+              : (r.is_overdue ? <Tag color="error">Overdue ({r.days_overdue}d)</Tag> : <Tag color="default">Pending</Tag>)
+          }
+        ]}
+      />
+    </div>
+  )
+}
+
+
 // Main ReportsPage
 // ─────────────────────────────────────────────────────────────
 const ReportsPage = () => {
@@ -748,29 +1232,45 @@ const ReportsPage = () => {
   const [searchText, setSearchText] = useState('')
   const [memberDetailModal, setMemberDetailModal] = useState({ open: false, memberId: null, memberName: '', memberNo: '', dues: [] })
   const [loading, setLoading] = useState(true)
+  const [asOfDate, setAsOfDate] = useState(dayjs())
 
   useEffect(() => {
     loadAll()
   }, [])
 
+  useEffect(() => {
+    if (dashboard) {
+      loadOverdueData(asOfDate)
+    }
+  }, [asOfDate])
+
+  const loadOverdueData = async (dateObj) => {
+    try {
+      const dateStr = dateObj ? dateObj.format('YYYY-MM-DD') : ''
+      const res = await reportsApi.getOverdueList({ date: dateStr })
+      setOverdueList(res.data?.overdue_list || [])
+      setUpcomingList(res.data?.upcoming_list || [])
+    } catch (_) {
+      message.error('Failed to load overdue list for selected date.')
+    }
+  }
+
   const loadAll = async () => {
     setLoading(true)
     try {
-      const [dash, mem, chits, loans, dues, overdue] = await Promise.all([
+      const [dash, mem, chits, loans, dues] = await Promise.all([
         reportsApi.getDashboard(),
         reportsApi.getMembersSummary(),
         reportsApi.getChitsSummary(),
         reportsApi.getLoansSummary(),
         reportsApi.getDuesSummary(),
-        reportsApi.getOverdueList(),
       ])
       setDashboard(dash.data)
       setMembersSummary(mem.data)
       setChitsSummary(chits.data)
       setLoansSummary(loans.data)
       setDuesSummary(dues.data)
-      setOverdueList(overdue.data?.overdue_list || [])
-      setUpcomingList(overdue.data?.upcoming_list || [])
+      await loadOverdueData(asOfDate)
     } catch (_) {}
     setLoading(false)
   }
@@ -927,7 +1427,7 @@ const ReportsPage = () => {
   const handlePrint = () => {
     const printWindow = window.open('', '_blank', 'width=900,height=600')
     const title = `${duesFilterType === 'overdue' ? 'Overdue Dues' : 'Upcoming Dues'} Report`
-    const dateLabel = new Date().toLocaleDateString('en-IN')
+    const dateLabel = asOfDate.format('DD/MM/YYYY')
 
     const tableRows = duesViewMode === 'grouped' 
       ? groupedData.map(g => `
@@ -1153,7 +1653,10 @@ const ReportsPage = () => {
             label: 'Welfare Funds',
             children: (
               <div>
-                <Card title={<Text style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>Welfare Scheme Performance</Text>}>
+                <Card title={<Text style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>Welfare Payments Report (Adjust Dates & Filter by Member)</Text>} style={{ marginBottom: 24 }}>
+                  <WelfareReport chitsSummary={chitsSummary} />
+                </Card>
+                <Card title={<Text style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>Welfare Scheme Performance Summary</Text>}>
                   <Table
                     columns={welfareGroupColumns}
                     dataSource={chitsSummary?.by_group || []}
@@ -1173,6 +1676,9 @@ const ReportsPage = () => {
             label: 'Loans',
             children: (
               <div>
+                <Card title={<Text style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>Loan Repayments / EMI Report (Adjust Dates & Filter by Member)</Text>} style={{ marginBottom: 24 }}>
+                  <LoanReport />
+                </Card>
                 <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
                   <Col xs={24} sm={12}>
                     <Card>
@@ -1309,11 +1815,21 @@ const ReportsPage = () => {
                       />
                     </Col>
                     <Col xs={24} sm={12} md={14} style={{ textAlign: 'right' }}>
-                      <Space>
+                      <Space wrap>
+                        <DatePicker
+                          value={asOfDate}
+                          onChange={(val) => val && setAsOfDate(val)}
+                          format="DD/MM/YYYY"
+                          placeholder="As of Date"
+                          style={{ width: 140 }}
+                        />
                         <Button type="primary" onClick={handlePrint}>
                           Print Report
                         </Button>
-                        <ExportButton exportFn={exportOverdue} filename="kvva_overdue.xlsx">
+                        <ExportButton 
+                          exportFn={() => exportOverdue({ date: asOfDate.format('YYYY-MM-DD'), type: duesFilterType })} 
+                          filename={duesFilterType === 'overdue' ? 'kvva_overdue.xlsx' : 'kvva_upcoming.xlsx'}
+                        >
                           Export Excel
                         </ExportButton>
                       </Space>

@@ -15,11 +15,17 @@ export const exportMembers = (params) =>
 export const exportSingleMember = (id) =>
   api.get(`/export/member/${id}/`, { responseType: 'blob' })
 
-export const exportOverdue = () =>
-  api.get('/export/overdue/', { responseType: 'blob' })
+export const exportOverdue = (params) =>
+  api.get('/export/overdue/', { params, responseType: 'blob' })
 
 export const exportPeriodReport = (params) =>
   api.get('/export/report/', { params, responseType: 'blob' })
+
+export const exportWelfareReport = (params) =>
+  api.get('/export/welfare-report/', { params, responseType: 'blob' })
+
+export const exportLoanReport = (params) =>
+  api.get('/export/loan-report/', { params, responseType: 'blob' })
 
 export const downloadBlob = (blob, filename) => {
   const url = window.URL.createObjectURL(new Blob([blob]))

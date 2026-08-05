@@ -258,3 +258,43 @@ def export_period_report(data):
     output = BytesIO()
     wb.save(output)
     return output.getvalue()
+
+
+def export_welfare_report(data_list):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Welfare Payments'
+    ws.append(['Member Name', 'Member No', 'Scheme Name', 'Month', 'Installment Amount (₹)', 'Amount Paid (₹)', 'Due Date', 'Paid Date', 'Mode', 'Receipt No', 'Status'])
+    style_header_row(ws)
+    for item in data_list:
+        status = 'Paid' if item['is_paid'] else ('Overdue' if item['is_overdue'] else 'Pending')
+        ws.append([
+            item['member_name'], item['member_no'], item['group_name'],
+            item['month_number'], float(item['installment_amount'] or 0), float(item['amount_paid'] or 0),
+            item['due_date'], item['paid_date'] or '',
+            item['payment_mode'], item['receipt_no'], status
+        ])
+    auto_column_width(ws)
+    output = BytesIO()
+    wb.save(output)
+    return output.getvalue()
+
+
+def export_loan_report(data_list):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Loan Repayments'
+    ws.append(['Member Name', 'Member No', 'Loan No', 'EMI No', 'EMI Amount (₹)', 'Due Date', 'Paid Date', 'Mode', 'Receipt No', 'Status'])
+    style_header_row(ws)
+    for item in data_list:
+        status = 'Paid' if item['is_paid'] else ('Overdue' if item['is_overdue'] else 'Pending')
+        ws.append([
+            item['member_name'], item['member_no'], item['loan_no'],
+            item['instalment_no'], float(item['amount_paid'] or 0),
+            item['due_date'], item['paid_date'] or '',
+            item['payment_mode'], item['receipt_no'], status
+        ])
+    auto_column_width(ws)
+    output = BytesIO()
+    wb.save(output)
+    return output.getvalue()

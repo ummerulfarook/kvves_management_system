@@ -148,57 +148,34 @@ class SingleMemberExportView(APIView):
 
 
 class OverdueExportView(APIView):
-    """GET /api/export/overdue/ — download overdue list as Excel."""
+    """GET /api/export/overdue/ — download overdue or upcoming list as Excel."""
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         from apps.reports.views import OverdueListView
-        from django.test import RequestFactory
+        view = OverdueListView()
+        view.request = request
+        res = view.get(request)
+        if res.status_code != 200:
+            return res
 
-        from apps.chits.models import ChitPayment
-        from apps.loans.models import LoanRepayment
-        from apps.dues.models import Due
-        from django.utils import timezone
+        data = res.data
+        t_param = request.query_params.get('type', 'overdue')
+        if t_param == 'upcoming':
+            records = data.get('upcoming_list', [])
+            filename = "kvva_upcoming.xlsx"
+        else:
+            records = data.get('overdue_list', [])
+            filename = "kvva_overdue.xlsx"
 
-        today = timezone.now().date()
-        result = []
-
-        chit_overdue = ChitPayment.objects.filter(is_paid=False, due_date__lt=today).select_related(
-            'enrollment__member', 'enrollment__chit_group')
-        for p in chit_overdue:
-            result.append({
-                'type': 'Chit Payment', 'member_no': p.enrollment.member.member_no,
-                'member_name': p.enrollment.member.full_name, 'amount': str(p.amount_paid),
-                'due_date': p.due_date.isoformat(), 'days_overdue': (today - p.due_date).days,
-                'detail': f"{p.enrollment.chit_group.group_name} — Month {p.month_number}",
-            })
-
-        loan_overdue = LoanRepayment.objects.filter(is_paid=False, due_date__lt=today).select_related('loan__member')
-        for r in loan_overdue:
-            result.append({
-                'type': 'Loan EMI', 'member_no': r.loan.member.member_no,
-                'member_name': r.loan.member.full_name, 'amount': str(r.amount_paid),
-                'due_date': r.due_date.isoformat(), 'days_overdue': (today - r.due_date).days,
-                'detail': f"Loan {r.loan.loan_no} — EMI {r.instalment_no}",
-            })
-
-        due_overdue = Due.objects.filter(status='pending', due_date__lt=today).select_related('member')
-        for d in due_overdue:
-            result.append({
-                'type': 'Due', 'member_no': d.member.member_no,
-                'member_name': d.member.full_name, 'amount': str(d.amount),
-                'due_date': d.due_date.isoformat(), 'days_overdue': (today - d.due_date).days,
-                'detail': d.get_due_type_display(),
-            })
-
-        result.sort(key=lambda x: x['days_overdue'], reverse=True)
-        excel_bytes = export_overdue(result)
+        from .exporters import export_overdue
+        excel_bytes = export_overdue(records)
         response = HttpResponse(
             excel_bytes,
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
-        response['Content-Disposition'] = 'attachment; filename="kvva_overdue.xlsx"'
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
         return response
 
 
@@ -241,4 +218,41 @@ class PeriodReportExportView(APIView):
         period = data.get('period', 'report')
         label = data.get('label', 'report').replace(' ', '_')
         response['Content-Disposition'] = f'attachment; filename="kvva_{period}_{label}.xlsx"'
+        return response
+
+
+class WelfareReportExportView(APIView):
+    permission_classes = [IsAuthenticated]
+    def get(self, request):
+        from apps.reports.views import WelfarePaymentsReportView
+        view = WelfarePaymentsReportView()
+        view.request = request
+        res = view.get(request)
+        if res.status_code != 200:
+            return res
+        from .exporters import export_welfare_report
+        excel_bytes = export_welfare_report(res.data['results'])
+        response = HttpResponse(
+            excel_bytes,
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = 'attachment; filename="welfare_report.xlsx"'
+        return response
+
+class LoanReportExportView(APIView):
+    permission_classes = [IsAuthenticated]
+    def get(self, request):
+        from apps.reports.views import LoanRepaymentsReportView
+        view = LoanRepaymentsReportView()
+        view.request = request
+        res = view.get(request)
+        if res.status_code != 200:
+            return res
+        from .exporters import export_loan_report
+        excel_bytes = export_loan_report(res.data['results'])
+        response = HttpResponse(
+            excel_bytes,
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = 'attachment; filename="loan_report.xlsx"'
         return response
