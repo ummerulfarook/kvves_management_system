@@ -669,6 +669,25 @@ class ChitClearDuesUpToMonthView(APIView):
         payment_mode = request.data.get('payment_mode', 'cash')
         receipt_no = request.data.get('receipt_no', '')
 
+        # Auto-create any missing payments up to up_to_month
+        from dateutil.relativedelta import relativedelta
+        from decimal import Decimal
+        from .models import ChitPayment
+        
+        start = enrollment.chit_group.start_date
+        for month in range(1, up_to_month + 1):
+            due_date = start + relativedelta(months=month - 1)
+            ChitPayment.objects.get_or_create(
+                enrollment=enrollment,
+                month_number=month,
+                defaults={
+                    'installment_amount': enrollment.chit_group.monthly_instalment,
+                    'amount_paid': Decimal('0.00'),
+                    'due_date': due_date,
+                    'is_paid': False,
+                }
+            )
+
         unpaid_payments = enrollment.payments.filter(
             month_number__lte=up_to_month,
             is_paid=False

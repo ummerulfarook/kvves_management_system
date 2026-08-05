@@ -56,6 +56,7 @@ const MemberDetailPage = () => {
   const [dues, setDues] = useState([])
   const [duesSummary, setDuesSummary] = useState(null)
   const [guarantorLoans, setGuarantorLoans] = useState([])
+  const [guarantorWelfares, setGuarantorWelfares] = useState([])
   const [masavariHistory, setMasavariHistory] = useState([])
   const [masavariPending, setMasavariPending] = useState([])
   const [masavariRate, setMasavariRate] = useState('50.00')
@@ -157,13 +158,15 @@ const MemberDetailPage = () => {
   }
   const loadDuesAndGuarantor = async () => {
     try {
-      const [dRes, gRes] = await Promise.all([
+      const [dRes, gRes, wRes] = await Promise.all([
         membersApi.getMemberDues(id),
         membersApi.getMemberGuarantorLoans(id),
+        membersApi.getMemberGuarantorWelfare(id),
       ])
       setDues(dRes.data.history || [])
       setDuesSummary(dRes.data.summary || null)
       setGuarantorLoans(gRes.data.results || gRes.data)
+      setGuarantorWelfares(wRes.data.results || wRes.data)
     } catch (_) {}
   }
   const loadMasavari = async () => {
@@ -877,6 +880,41 @@ const MemberDetailPage = () => {
           ]}
         />
       )}
+
+      <Divider style={{ margin: '24px 0' }} />
+
+      {/* Guarantor For Welfare */}
+      <Title level={5} style={{ marginBottom: 12 }}>Guarantor For Welfare (Chits)</Title>
+      {guarantorWelfares.length === 0 ? (
+        <div style={{ color: '#6b7280', padding: '12px 0' }}>Not a guarantor for any active welfare scheme.</div>
+      ) : (
+        <Table
+          dataSource={guarantorWelfares}
+          rowKey="id"
+          size="small"
+          pagination={false}
+          columns={[
+            { title: 'Welfare Scheme', key: 'scheme', render: (_, row) => (
+              <div>
+                <div style={{ fontWeight: 600 }}>{row.group_name}</div>
+                <div style={{ fontSize: 11, color: '#9ba3bc' }}>{row.group_no}</div>
+              </div>
+            )},
+            { title: 'Token / Ticket', dataIndex: 'ticket_number', render: (v) => <Tag color="blue">#{v}</Tag> },
+            { title: 'Subscriber', key: 'subscriber', render: (_, row) => (
+              <div>
+                <div style={{ fontWeight: 600 }}>{row.member_name || row.non_member_name}</div>
+                <div style={{ fontSize: 11, color: '#9ba3bc' }}>{row.member_no}</div>
+              </div>
+            )},
+            { title: 'Relationship', key: 'relationship', render: (_, row) => {
+              const isG1 = row.guarantor1 === member?.id || row.guarantor1_id === member?.id
+              return <Tag color={isG1 ? 'cyan' : 'purple'}>{isG1 ? 'Guarantor 1' : 'Guarantor 2'}</Tag>
+            }},
+            { title: 'Status', dataIndex: 'status', render: (v) => <StatusBadge status={v} /> },
+          ]}
+        />
+      )}
     </div>
   )
 
@@ -970,7 +1008,8 @@ const MemberDetailPage = () => {
             { title: 'Active Loans', value: summary.active_loans, color: '#8b5cf6' },
             { title: 'Outstanding Loans', value: summary.total_loan_outstanding, color: '#ef4444', prefix: '₹', isCurrency: true },
             { title: 'Pending Dues', value: summary.pending_dues, color: '#f59e0b' },
-            { title: 'Guarantor For', value: summary.guarantor_loans_count || 0, color: '#0d9488' },
+            { title: 'Guarantor For (Loans)', value: summary.guarantor_loans_count || 0, color: '#0d9488' },
+            { title: 'Guarantor For (Welfares)', value: summary.guarantor_welfares_count || 0, color: '#0ea5e9' },
           ].map((stat) => (
             <Col key={stat.title} xs={12} sm={8} md={6} lg={4}>
               <Card size="small" style={{ textAlign: 'center' }}>

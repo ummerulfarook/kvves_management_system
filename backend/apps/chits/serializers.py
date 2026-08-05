@@ -92,7 +92,7 @@ class ChitEnrollmentSerializer(serializers.ModelSerializer):
     )
     paid_months = serializers.IntegerField(read_only=True)
     total_paid_amount = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
-    payments = ChitPaymentSerializer(many=True, read_only=True)
+    payments = serializers.SerializerMethodField()
     next_pending_month = serializers.SerializerMethodField()
 
     class Meta:
@@ -135,6 +135,33 @@ class ChitEnrollmentSerializer(serializers.ModelSerializer):
         if pending:
             return pending.month_number
         return None
+
+    def get_payments(self, obj):
+        from dateutil.relativedelta import relativedelta
+        from decimal import Decimal
+        from .models import ChitPayment
+        
+        group = obj.chit_group
+        start = group.start_date
+        existing_months = set(obj.payments.values_list('month_number', flat=True))
+        
+        missing_months = [m for m in range(1, group.current_month + 1) if m not in existing_months]
+        if missing_months:
+            for month in missing_months:
+                due_date = start + relativedelta(months=month - 1)
+                ChitPayment.objects.get_or_create(
+                    enrollment=obj,
+                    month_number=month,
+                    defaults={
+                        'installment_amount': group.monthly_instalment,
+                        'amount_paid': Decimal('0.00'),
+                        'due_date': due_date,
+                        'is_paid': False,
+                    }
+                )
+        
+        payments = obj.payments.all().order_by('month_number')
+        return ChitPaymentSerializer(payments, many=True).data
 
     def get_member_name(self, obj):
         if obj.member:
@@ -233,7 +260,10 @@ class ChitEnrollmentSerializer(serializers.ModelSerializer):
             elif field not in attrs and not self.instance:
                 attrs[field] = ""
 
-        if not attrs.get('ticket_number') and not (self.instance and self.instance.ticket_number):
+        if self.instance and self.instance.ticket_number:
+            if not attrs.get('ticket_number'):
+                attrs['ticket_number'] = self.instance.ticket_number
+        elif not attrs.get('ticket_number'):
             from re import search
             enrollments = group.enrollments.all()
             max_num = 0

@@ -3,7 +3,7 @@ import {
   Table, Button, Select, Space, Typography, Tag, Modal, Form, Input, InputNumber,
   DatePicker, Tabs, message, Row, Col, Card, Descriptions,
 } from 'antd'
-import { PlusOutlined, EyeOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons'
+import { PlusOutlined, EyeOutlined, CheckCircleOutlined, CloseCircleOutlined, EditOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import * as loansApi from '../../api/loans'
 import * as membersApi from '../../api/members'
@@ -41,6 +41,14 @@ const LoansPage = () => {
   const loanMember = Form.useWatch('member', loanForm)
   const loanGuarantor = Form.useWatch('guarantor', loanForm)
   const loanGuarantor2 = Form.useWatch('guarantor2', loanForm)
+
+  const [editLoanModal, setEditLoanModal] = useState(false)
+  const [editingLoan, setEditingLoan] = useState(null)
+  const [editLoanForm] = Form.useForm()
+
+  const editLoanMember = Form.useWatch('member', editLoanForm)
+  const editLoanGuarantor = Form.useWatch('guarantor', editLoanForm)
+  const editLoanGuarantor2 = Form.useWatch('guarantor2', editLoanForm)
 
   useEffect(() => {
     loadLoans()
@@ -87,6 +95,42 @@ const LoansPage = () => {
       loadLoans()
     } catch (err) {
       if (err?.response?.data?.message) message.error(err.response.data.message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const openEditLoanModal = (loan) => {
+    setEditingLoan(loan)
+    editLoanForm.resetFields()
+    loadMembersForSelect()
+    editLoanForm.setFieldsValue({
+      ...loan,
+      disbursement_date: loan.disbursement_date ? dayjs(loan.disbursement_date) : null,
+    })
+    setEditLoanModal(true)
+  }
+
+  const handleUpdateLoan = async () => {
+    setSubmitting(true)
+    try {
+      const values = await editLoanForm.validateFields()
+      const res = await loansApi.updateLoan(editingLoan.id, {
+        ...values,
+        disbursement_date: values.disbursement_date ? values.disbursement_date.format('YYYY-MM-DD') : null,
+      })
+      message.success('Loan updated successfully!')
+      setEditLoanModal(false)
+      loadLoans()
+      if (selectedLoan && selectedLoan.id === editingLoan.id) {
+        setSelectedLoan(res.data)
+      }
+    } catch (err) {
+      if (err?.response?.data?.message) {
+        message.error(err.response.data.message)
+      } else {
+        message.error('Failed to update loan.')
+      }
     } finally {
       setSubmitting(false)
     }
@@ -166,9 +210,11 @@ const LoansPage = () => {
 
   const columns = [
     { title: 'Loan No', dataIndex: 'loan_no', key: 'loan_no',
+      sorter: (a, b) => a.loan_no.localeCompare(b.loan_no),
       render: (v) => <Text style={{ color: '#2563eb', fontWeight: 600, fontFamily: 'monospace' }}>{v}</Text>
     },
     { title: 'Member', key: 'member',
+      sorter: (a, b) => a.member_name.localeCompare(b.member_name),
       render: (_, row) => (
         <div>
           <div style={{ fontWeight: 600 }}>{row.member_name}</div>
@@ -177,13 +223,20 @@ const LoansPage = () => {
       )
     },
     { title: 'Type', dataIndex: 'loan_type', render: (v) => <Tag>{v}</Tag> },
-    { title: 'Amount', dataIndex: 'loan_amount', render: (v) => formatCurrency(v) },
+    { title: 'Amount', dataIndex: 'loan_amount',
+      sorter: (a, b) => parseFloat(a.loan_amount || 0) - parseFloat(b.loan_amount || 0),
+      render: (v) => formatCurrency(v)
+    },
     { title: 'Svc Charge', dataIndex: 'service_charge', render: (v) => formatCurrency(v || 0) },
     { title: 'Outstanding', dataIndex: 'outstanding_balance',
+      sorter: (a, b) => parseFloat(a.outstanding_balance || 0) - parseFloat(b.outstanding_balance || 0),
       render: (v) => <Text style={{ color: v > 0 ? '#ef4444' : '#22c55e', fontWeight: 600 }}>{formatCurrency(v)}</Text>
     },
     { title: 'Frequency', dataIndex: 'repayment_frequency', render: (v) => <Tag>{v || 'monthly'}</Tag> },
-    { title: 'Status', dataIndex: 'status', render: (v) => <StatusBadge status={v} /> },
+    { title: 'Status', dataIndex: 'status',
+      sorter: (a, b) => a.status.localeCompare(b.status),
+      render: (v) => <StatusBadge status={v} />
+    },
     {
       title: 'Actions', key: 'actions',
       render: (_, row) => (
@@ -192,6 +245,12 @@ const LoansPage = () => {
             onClick={() => setSelectedLoan(row)} style={{ color: '#2563eb' }}>
             View
           </Button>
+          {canWrite && (
+            <Button size="small" icon={<EditOutlined />}
+              onClick={() => openEditLoanModal(row)}>
+              Edit
+            </Button>
+          )}
           {canApproveLoan && row.status === 'pending' && (
             <Button size="small" type="primary" icon={<CheckCircleOutlined />}
               onClick={() => openApproveModal(row)} id={`approve-loan-${row.id}`}>
@@ -466,6 +525,123 @@ const LoansPage = () => {
             <Col xs={24}>
               <Form.Item label="Purpose" name="purpose">
                 <Input.TextArea id="loan-purpose" rows={2} />
+              </Form.Item>
+            </Col>
+          </Row>
+        </Form>
+      </Modal>
+
+      {/* Edit Loan Modal */}
+      <Modal
+        title="Edit Loan Details"
+        open={editLoanModal}
+        onCancel={() => setEditLoanModal(false)}
+        onOk={handleUpdateLoan}
+        confirmLoading={submitting}
+        okText="Save Changes"
+        width={620}
+      >
+        <Form form={editLoanForm} layout="vertical">
+          <Row gutter={16}>
+            <Col xs={12}>
+              <Form.Item label="Loan Number" name="loan_no" rules={[{ required: true }]}>
+                <Input placeholder="e.g. LN-2026-001" />
+              </Form.Item>
+            </Col>
+            <Col xs={12}>
+              <Form.Item label="Member" name="member" rules={[{ required: true }]}>
+                <Select
+                  showSearch filterOption={false}
+                  onSearch={loadMembersForSelect}
+                  placeholder="Search member"
+                  disabled={editingLoan?.status !== 'pending'}
+                >
+                  {members.filter(m => m.id != editLoanGuarantor && m.id != editLoanGuarantor2).map((m) => (
+                    <Option key={m.id} value={m.id}>{m.full_name} ({m.member_no})</Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col xs={12}>
+              <Form.Item label="Loan Type" name="loan_type" rules={[{ required: true }]}>
+                <Select>
+                  {LOAN_TYPE_OPTIONS.map((o) => <Option key={o.value} value={o.value}>{o.label}</Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col xs={12}>
+              <Form.Item label="Loan Amount (₹)" name="loan_amount" rules={[{ required: true }]}>
+                <InputNumber min={0} style={{ width: '100%' }} prefix="₹" />
+              </Form.Item>
+            </Col>
+            <Col xs={12}>
+              <Form.Item label="Service Charge (₹)" name="service_charge" rules={[{ required: true }]}
+                tooltip="Fixed service charge amount in ₹ (not a percentage)">
+                <InputNumber min={0} style={{ width: '100%' }} prefix="₹" />
+              </Form.Item>
+            </Col>
+            <Col xs={12}>
+              <Form.Item label="Repayment Frequency" name="repayment_frequency">
+                <Select>
+                  <Option value="monthly">Monthly</Option>
+                  <Option value="daily">Daily</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col xs={12}>
+              <Form.Item
+                label={Form.useWatch('repayment_frequency', editLoanForm) === 'daily' ? 'Duration (Days)' : 'Duration (Months)'}
+                name="duration_months"
+                rules={[{ required: true }]}
+              >
+                <InputNumber min={1} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col xs={12}>
+              <Form.Item label="EMI Amount (₹)" name="emi_amount" rules={[{ required: true }]}>
+                <InputNumber min={0} style={{ width: '100%' }} prefix="₹" />
+              </Form.Item>
+            </Col>
+            <Col xs={12}>
+              <Form.Item label="Disbursement Date" name="disbursement_date">
+                <DatePicker style={{ width: '100%' }} format="DD/MM/YYYY" />
+              </Form.Item>
+            </Col>
+            <Col xs={12}>
+              <Form.Item label="Status" name="status" rules={[{ required: true }]}>
+                <Select>
+                  {LOAN_STATUS_OPTIONS.map((o) => <Option key={o.value} value={o.value}>{o.label}</Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col xs={12}>
+              <Form.Item label="Compulsory Guarantor" name="guarantor" rules={[{ required: true, message: 'Compulsory guarantor is required.' }]}>
+                <Select showSearch filterOption={false} onSearch={loadMembersForSelect}
+                  placeholder="Select compulsory guarantor">
+                  {members.filter(m => m.id != editLoanMember && m.id != editLoanGuarantor2).map((m) => (
+                    <Option key={m.id} value={m.id}>{m.full_name} ({m.member_no})</Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col xs={12}>
+              <Form.Item label="Optional Guarantor" name="guarantor2">
+                <Select showSearch filterOption={false} onSearch={loadMembersForSelect}
+                  placeholder="Select optional guarantor" allowClear>
+                  {members.filter(m => m.id != editLoanMember && m.id != editLoanGuarantor).map((m) => (
+                    <Option key={m.id} value={m.id}>{m.full_name} ({m.member_no})</Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col xs={24}>
+              <Form.Item label="Purpose" name="purpose">
+                <Input.TextArea rows={2} />
+              </Form.Item>
+            </Col>
+            <Col xs={24}>
+              <Form.Item label="Remarks" name="remarks">
+                <Input.TextArea rows={2} />
               </Form.Item>
             </Col>
           </Row>

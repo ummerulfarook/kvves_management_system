@@ -40,6 +40,7 @@ const AddMemberPage = () => {
           ...data,
           date_of_birth: data.date_of_birth ? dayjs(data.date_of_birth) : null,
           joining_date: data.joining_date ? dayjs(data.joining_date) : null,
+          masavari_paid_till: data.masavari_paid_till ? dayjs(data.masavari_paid_till) : null,
         })
       }).catch(() => message.error('Failed to load member data.'))
     }
@@ -225,14 +226,12 @@ const AddMemberPage = () => {
           <InputNumber id="member-masavari-amount" min={0} style={{ width: '100%' }} prefix="₹" />
         </Form.Item>
       </Col>
-      {!isEdit && (
-        <Col xs={24} md={12}>
-          <Form.Item label="Masavari Paid Till" name="masavari_paid_till" help="Optional. Auto-creates paid Masavari payments from joining date up to this month to prevent auto-deactivation.">
-            <DatePicker id="member-masavari-paid-till" picker="month" format="MM/YYYY" style={{ width: '100%' }}
-              disabledDate={(d) => d && d.isAfter(dayjs())} />
-          </Form.Item>
-        </Col>
-      )}
+      <Col xs={24} md={12}>
+        <Form.Item label="Masavari Paid Till" name="masavari_paid_till" help="Optional. Auto-creates paid Masavari payments from joining date up to this month to prevent auto-deactivation.">
+          <DatePicker id="member-masavari-paid-till" picker="month" format="MM/YYYY" style={{ width: '100%' }}
+            disabledDate={(d) => d && d.isAfter(dayjs())} />
+        </Form.Item>
+      </Col>
       <Col xs={24}>
         <Form.Item label="Member Photo" name="photo">
           <Upload

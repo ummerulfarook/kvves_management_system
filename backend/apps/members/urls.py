@@ -16,6 +16,7 @@ urlpatterns = [
     path('members/<int:pk>/dues/', views.MemberDuesView.as_view(), name='members-dues'),
     path('members/<int:pk>/deposits/', views.MemberDepositsView.as_view(), name='members-deposits'),
     path('members/<int:pk>/guarantor-loans/', views.MemberGuarantorLoansView.as_view(), name='members-guarantor-loans'),
+    path('members/<int:pk>/guarantor-welfare/', views.MemberGuarantorWelfareView.as_view(), name='members-guarantor-welfare'),
     path('members/<int:pk>/masavari/', views.MemberMasavariView.as_view(), name='members-masavari'),
     path('members/<int:pk>/clear-dues/', views.MemberClearDuesView.as_view(), name='member-clear-dues'),
     path('members/<int:pk>/clear-masavari/', views.MemberClearMasavariView.as_view(), name='member-clear-masavari'),

@@ -25,12 +25,22 @@ class MemberDetailSerializer(serializers.ModelSerializer):
 
     created_by_name = serializers.SerializerMethodField()
     age = serializers.SerializerMethodField()
-    masavari_paid_till = serializers.DateField(write_only=True, required=False, allow_null=True)
+    masavari_paid_till = serializers.DateField(required=False, allow_null=True)
 
     class Meta:
         model = Member
         fields = '__all__'
         read_only_fields = ['created_at', 'updated_at', 'created_by']
+
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        last_paid = instance.masavari_payments.filter(status='paid').order_by('-year', '-month').first()
+        if last_paid:
+            import datetime
+            ret['masavari_paid_till'] = datetime.date(last_paid.year, last_paid.month, 1).isoformat()
+        else:
+            ret['masavari_paid_till'] = None
+        return ret
 
     def get_created_by_name(self, obj):
         if obj.created_by:

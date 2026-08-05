@@ -65,6 +65,78 @@ class LoanSerializer(serializers.ModelSerializer):
         validated_data['outstanding_balance'] = validated_data.get('loan_amount', 0)
         return super().create(validated_data)
 
+    def update(self, instance, validated_data):
+        from decimal import Decimal
+        from django.utils import timezone
+        import datetime
+        from dateutil.relativedelta import relativedelta
+
+        old_amount = instance.loan_amount
+        old_emi = instance.emi_amount
+        old_duration = instance.duration_months
+        old_frequency = instance.repayment_frequency
+        old_disb = instance.disbursement_date
+
+        loan = super().update(instance, validated_data)
+
+        # If any of these changed and the loan is active/pending, recalculate outstanding balance and recreate repayments
+        amount_changed = 'loan_amount' in validated_data and validated_data['loan_amount'] != old_amount
+        duration_changed = 'duration_months' in validated_data and validated_data['duration_months'] != old_duration
+        emi_changed = 'emi_amount' in validated_data and validated_data['emi_amount'] != old_emi
+        frequency_changed = 'repayment_frequency' in validated_data and validated_data['repayment_frequency'] != old_frequency
+        disb_changed = 'disbursement_date' in validated_data and validated_data['disbursement_date'] != old_disb
+
+        if amount_changed or duration_changed or emi_changed or frequency_changed or disb_changed:
+            if loan.status == 'pending':
+                # If pending, outstanding balance is just the loan amount
+                loan.outstanding_balance = loan.loan_amount
+                loan.save()
+            elif loan.status == 'active':
+                # Re-generate/update the repayments schedule
+                # Delete unpaid repayments
+                loan.repayments.filter(is_paid=False).delete()
+                
+                # Check how many repayments have been paid
+                paid_repayments = list(loan.repayments.filter(is_paid=True).order_by('instalment_no'))
+                paid_count = len(paid_repayments)
+                
+                # Recreate remaining unpaid repayments
+                total_paid_amt = sum(r.amount_paid for r in paid_repayments)
+                balance = loan.loan_amount - total_paid_amt
+                is_daily = loan.repayment_frequency == 'daily'
+                disb_date = loan.disbursement_date or timezone.now().date()
+                
+                for i in range(paid_count + 1, loan.duration_months + 1):
+                    if is_daily:
+                        due_date = disb_date + datetime.timedelta(days=i)
+                    else:
+                        due_date = disb_date + relativedelta(months=i)
+                    
+                    principal = loan.emi_amount
+                    if i == loan.duration_months:
+                        principal = balance
+                    balance -= principal
+                    outstanding_after = max(balance, Decimal('0.00'))
+                    
+                    LoanRepayment.objects.get_or_create(
+                        loan=loan,
+                        instalment_no=i,
+                        defaults={
+                            'amount_paid': Decimal('0.00'),
+                            'principal_paid': Decimal('0.00'),
+                            'interest_paid': Decimal('0.00'),
+                            'due_date': due_date,
+                            'outstanding_after': outstanding_after,
+                            'is_paid': False,
+                        }
+                    )
+                
+                # Recalculate outstanding balance on the loan model
+                loan.update_outstanding_balance()
+                loan.save()
+
+        return loan
+
     def validate_loan_amount(self, value):
         if value <= 0:
             raise serializers.ValidationError('Loan amount must be positive.')

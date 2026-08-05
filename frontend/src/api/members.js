@@ -26,6 +26,7 @@ export const getMemberDues = (id, params) => api.get(`/members/${id}/dues/`, { p
 export const getMemberDeposits = (id) => api.get(`/members/${id}/deposits/`)
 export const getMemberCurries = (id) => api.get(`/members/${id}/curries/`)
 export const getMemberGuarantorLoans = (id) => api.get(`/members/${id}/guarantor-loans/`)
+export const getMemberGuarantorWelfare = (id) => api.get(`/members/${id}/guarantor-welfare/`)
 export const getMemberMasavari = (id) => api.get(`/members/${id}/masavari/`)
 export const getMemberAllowances = (id) => api.get(`/members/${id}/allowances/`)
 export const createMemberAllowance = (id, data) => api.post(`/members/${id}/allowances/`, data)

@@ -64,7 +64,23 @@ class MemberListCreateView(generics.ListCreateAPIView):
             check_member_masavari_statuses()
         except Exception:
             pass
-        return Member.objects.select_related('created_by').all()
+        queryset = Member.objects.select_related('created_by').all()
+
+        search_term = self.request.query_params.get('search', '').strip()
+        if search_term:
+            q_exact = Q(member_no__iexact=search_term)
+            if search_term.isdigit():
+                val_int = int(search_term)
+                q_exact |= Q(member_no__iexact=str(val_int))
+                q_exact |= Q(member_no__iexact=f"MEM{val_int}")
+                q_exact |= Q(member_no__iexact=f"MEM{str(val_int).zfill(3)}")
+                q_exact |= Q(member_no__iexact=str(val_int).zfill(3))
+            
+            exact_qs = queryset.filter(q_exact)
+            if exact_qs.exists():
+                return exact_qs
+
+        return queryset
 
     def get_serializer_class(self):
         if self.request.method == 'POST':
@@ -180,6 +196,12 @@ class MemberSummaryView(APIView):
             guarantor=member, status='active'
         ).count()
 
+        # Guarantor for welfare
+        from apps.chits.models import ChitEnrollment as ChitEnrollmentModel
+        guarantor_welfares_count = ChitEnrollmentModel.objects.filter(
+            Q(guarantor1=member) | Q(guarantor2=member), status__in=['active', 'awarded']
+        ).count()
+
         # Dues
         pending_dues = member.dues.filter(
             Q(status='pending') | Q(status='overdue')
@@ -199,6 +221,7 @@ class MemberSummaryView(APIView):
             'active_loans': active_loans,
             'total_loan_outstanding': str(total_loan_outstanding),
             'guarantor_loans_count': guarantor_loans_count,
+            'guarantor_welfares_count': guarantor_welfares_count,
             'pending_dues': pending_dues,
             'total_due_amount': str(total_due_amount),
         })
@@ -401,6 +424,23 @@ class MemberGuarantorLoansView(generics.ListAPIView):
     def get_serializer_class(self):
         from apps.loans.serializers import LoanSerializer
         return LoanSerializer
+
+
+class MemberGuarantorWelfareView(generics.ListAPIView):
+    """GET /api/members/{id}/guarantor-welfare/ — welfare enrollments where this member is a guarantor."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        from apps.chits.models import ChitEnrollment
+        from django.db.models import Q
+        return ChitEnrollment.objects.filter(
+            Q(guarantor1_id=self.kwargs['pk']) | Q(guarantor2_id=self.kwargs['pk'])
+        ).select_related('member', 'chit_group').order_by('-created_at')
+
+    def get_serializer_class(self):
+        from apps.chits.serializers import ChitEnrollmentSerializer
+        return ChitEnrollmentSerializer
 
 
 class MemberMasavariView(APIView):

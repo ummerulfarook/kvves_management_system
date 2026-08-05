@@ -50,12 +50,19 @@ def update_member_masavari_status(member, today=None):
             member.save()
 
 
+_last_status_check_date = None
+
 def check_member_masavari_statuses():
     """Checks all active/inactive members' Masavari payments and updates their statuses.
     If unpaid months >= 12, set status to 'inactive'.
     If unpaid months < 12, set status to 'active'.
     """
+    global _last_status_check_date
     today = timezone.now().date()
+    if _last_status_check_date == today:
+        return
+    _last_status_check_date = today
+
     members = list(Member.objects.filter(status__in=['active', 'inactive']))
 
     # Fetch all paid Masavari payments grouped by member
@@ -152,3 +159,13 @@ def populate_masavari_payments_up_to(member, paid_till_date_or_str, recorded_by=
             }
         )
         curr += relativedelta(months=1)
+
+    # Set any masavari payments after the paid_till date to pending status
+    MasavariPayment.objects.filter(
+        member=member,
+        due_date__gt=paid_till
+    ).update(
+        status='pending',
+        paid_date=None,
+        recorded_by=None,
+    )
