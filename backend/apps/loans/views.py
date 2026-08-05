@@ -18,6 +18,7 @@ class LoanListCreateView(generics.ListCreateAPIView):
     """GET /api/loans/ | POST — create loan application."""
 
     serializer_class = LoanSerializer
+    pagination_class = None
     permission_classes = [IsAuthenticated, IsAdminOrStaffOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['status', 'loan_type']
@@ -359,6 +360,7 @@ class LoanOverdueView(generics.ListAPIView):
     """GET /api/loans/overdue/ — all overdue EMIs."""
 
     serializer_class = LoanRepaymentSerializer
+    pagination_class = None
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
