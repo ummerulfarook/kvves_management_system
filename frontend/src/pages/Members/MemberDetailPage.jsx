@@ -637,6 +637,22 @@ const MemberDetailPage = () => {
             <Col><Text style={{ color: '#9ba3bc', fontSize: 12 }}>Paid: <strong style={{ color: '#22c55e' }}>{enrollment.paid_months} months</strong></Text></Col>
             <Col><Text style={{ color: '#9ba3bc', fontSize: 12 }}>Total Paid: <strong style={{ color: 'var(--color-text-primary)' }}>{formatCurrency(enrollment.total_paid_amount)}</strong></Text></Col>
           </Row>
+          <Row gutter={16} style={{ marginBottom: 8 }}>
+            <Col>
+              <Text style={{ color: '#9ba3bc', fontSize: 12 }}>
+                Guarantor 1: <strong style={{ color: 'var(--color-text-primary)' }}>
+                  {enrollment.guarantor1_name || (enrollment.guarantor1_non_member_name ? `${enrollment.guarantor1_non_member_name} (Non-Member)` : '—')}
+                </strong>
+              </Text>
+            </Col>
+            <Col>
+              <Text style={{ color: '#9ba3bc', fontSize: 12 }}>
+                Guarantor 2: <strong style={{ color: 'var(--color-text-primary)' }}>
+                  {enrollment.guarantor2_name || (enrollment.guarantor2_non_member_name ? `${enrollment.guarantor2_non_member_name} (Non-Member)` : '—')}
+                </strong>
+              </Text>
+            </Col>
+          </Row>
           {enrollment.payments && enrollment.payments.length > 0 && (
             <Table
               dataSource={enrollment.payments}

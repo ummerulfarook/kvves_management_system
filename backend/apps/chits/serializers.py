@@ -93,6 +93,8 @@ class ChitEnrollmentSerializer(serializers.ModelSerializer):
     paid_months = serializers.IntegerField(read_only=True)
     total_paid_amount = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
     payments = serializers.SerializerMethodField()
+    guarantor1_member_no = serializers.SerializerMethodField()
+    guarantor2_member_no = serializers.SerializerMethodField()
     next_pending_month = serializers.SerializerMethodField()
 
     class Meta:
@@ -128,6 +130,16 @@ class ChitEnrollmentSerializer(serializers.ModelSerializer):
             return obj.guarantor2.full_name
         if obj.guarantor2_non_member_name:
             return f"{obj.guarantor2_non_member_name} (Non-Member)"
+        return None
+
+    def get_guarantor1_member_no(self, obj):
+        if obj.guarantor1:
+            return obj.guarantor1.member_no
+        return None
+
+    def get_guarantor2_member_no(self, obj):
+        if obj.guarantor2:
+            return obj.guarantor2.member_no
         return None
 
     def get_next_pending_month(self, obj):

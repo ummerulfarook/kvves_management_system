@@ -254,14 +254,22 @@ const WelfarePage = () => {
     setOverdueLoading(false)
   }
 
-  const loadMembersForSelect = useCallback(async (search = '') => {
+  const loadMembersForSelect = async (search = '', extraMembers = []) => {
     setMembersLoading(true)
     try {
       const res = await membersApi.getMembers({ search, page_size: 100 })
-      setMembers(res.data.results || res.data)
+      const fetched = res.data.results || res.data
+      const merged = [...extraMembers]
+      const seenIds = new Set(merged.map(m => m.id))
+      for (const m of fetched) {
+        if (!seenIds.has(m.id)) {
+          merged.push(m)
+        }
+      }
+      setMembers(merged)
     } catch (_) {}
     setMembersLoading(false)
-  }, [])
+  }
 
   const calculateNextToken = (groupObj, enrollList) => {
     let maxNum = 0
@@ -449,7 +457,29 @@ const WelfarePage = () => {
       status: enrollment.status,
       remarks: enrollment.remarks,
     })
-    loadMembersForSelect('')
+    const extras = []
+    if (enrollment.member) {
+      extras.push({
+        id: enrollment.member,
+        full_name: enrollment.member_name,
+        member_no: enrollment.member_no,
+      })
+    }
+    if (enrollment.guarantor1 && enrollment.guarantor1_name) {
+      extras.push({
+        id: enrollment.guarantor1,
+        full_name: enrollment.guarantor1_name,
+        member_no: enrollment.guarantor1_member_no || '',
+      })
+    }
+    if (enrollment.guarantor2 && enrollment.guarantor2_name) {
+      extras.push({
+        id: enrollment.guarantor2,
+        full_name: enrollment.guarantor2_name,
+        member_no: enrollment.guarantor2_member_no || '',
+      })
+    }
+    loadMembersForSelect('', extras)
     setEditMemberModal(true)
   }
 

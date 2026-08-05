@@ -76,7 +76,7 @@ const LoansPage = () => {
 
   const loadMembersForSelect = async (search = '') => {
     try {
-      const res = await membersApi.getMembers({ search, status: 'active' })
+      const res = await membersApi.getMembers({ search })
       setMembers(res.data.results || res.data)
     } catch (_) {}
   }
