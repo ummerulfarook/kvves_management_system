@@ -18,6 +18,11 @@ const { Title, Text } = Typography
 const { Option } = Select
 const { TextArea } = Input
 
+const safeParseFloat = (val) => {
+  const parsed = parseFloat(val)
+  return isNaN(parsed) ? undefined : parsed
+}
+
 const CollectionsPage = () => {
   const { canWrite } = usePermissions()
   const [form] = Form.useForm()
@@ -141,7 +146,7 @@ const CollectionsPage = () => {
               nextMonth = latest.month + 1
               if (nextMonth > 12) nextMonth = 1
             }
-            const amt = parseFloat(masavari?.default_amount || 50)
+            const amt = safeParseFloat(masavari?.default_amount) || 50
             form.setFieldsValue({
               month_number: nextMonth,
               amount: amt,
@@ -158,7 +163,7 @@ const CollectionsPage = () => {
         })
       } else {
         const nextMonth = masavari?.pending?.[0]?.month || undefined
-        const amt = parseFloat(masavari?.default_amount || 50)
+        const amt = safeParseFloat(masavari?.default_amount) || 50
         form.setFieldsValue({
           month_number: nextMonth,
           amount: amt,
@@ -170,7 +175,7 @@ const CollectionsPage = () => {
         form.setFieldsValue({
           welfare_group: w.id,
           month_number: w.next_pending_month || undefined,
-          amount: parseFloat(w.monthly_instalment) || undefined,
+          amount: safeParseFloat(w.monthly_instalment),
         })
       } else {
         form.setFieldsValue({ welfare_group: undefined, month_number: undefined, amount: undefined })
@@ -181,7 +186,7 @@ const CollectionsPage = () => {
         form.setFieldsValue({
           loan: l.id,
           month_number: l.next_pending_instalment || undefined,
-          amount: parseFloat(l.emi_amount) || undefined,
+          amount: safeParseFloat(l.emi_amount),
         })
       } else {
         form.setFieldsValue({ loan: undefined, month_number: undefined, amount: undefined })
@@ -219,7 +224,7 @@ const CollectionsPage = () => {
         welfare_group: selected.id,
         member: undefined,
         month_number: selected.next_pending_month || 1,
-        amount: parseFloat(selected.monthly_instalment) || undefined,
+        amount: safeParseFloat(selected.monthly_instalment),
       })
     }
   }
@@ -271,7 +276,7 @@ const CollectionsPage = () => {
     if (selected) {
       form.setFieldsValue({
         month_number: selected.next_pending_month || undefined,
-        amount: parseFloat(selected.monthly_instalment) || undefined,
+        amount: safeParseFloat(selected.monthly_instalment),
       })
     }
   }
@@ -281,7 +286,7 @@ const CollectionsPage = () => {
     if (selected) {
       form.setFieldsValue({
         month_number: selected.next_pending_instalment || undefined,
-        amount: parseFloat(selected.emi_amount) || undefined,
+        amount: safeParseFloat(selected.emi_amount),
       })
     }
   }
@@ -531,12 +536,12 @@ const CollectionsPage = () => {
                                 onChange={handleWelfareEnrollmentSelect}
                                 showSearch
                                 filterOption={(input, option) =>
-                                  (option?.children ?? '').toLowerCase().includes(input.toLowerCase())
+                                  String(option?.children ?? '').toLowerCase().includes(input.toLowerCase())
                                 }
                               >
                                 {nonMemberEnrollments.map((e) => (
                                   <Option key={e.id} value={e.id}>
-                                    {e.non_member_name} (Token #{e.ticket_number}) · {e.group_name} ({e.group_no})
+                                    {`${e.non_member_name || ''} (Token #${e.ticket_number || ''}) · ${e.group_name || ''} (${e.group_no || ''})`}
                                   </Option>
                                 ))}
                               </Select>
