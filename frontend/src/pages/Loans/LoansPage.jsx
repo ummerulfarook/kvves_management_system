@@ -210,7 +210,12 @@ const LoansPage = () => {
 
   const columns = [
     { title: 'Loan No', dataIndex: 'loan_no', key: 'loan_no',
-      sorter: (a, b) => a.loan_no.localeCompare(b.loan_no),
+      sorter: (a, b) => {
+        const numA = parseInt(a.loan_no, 10)
+        const numB = parseInt(b.loan_no, 10)
+        if (!isNaN(numA) && !isNaN(numB)) return numA - numB
+        return (a.loan_no || '').localeCompare(b.loan_no || '')
+      },
       render: (v) => <Text style={{ color: '#2563eb', fontWeight: 600, fontFamily: 'monospace' }}>{v}</Text>
     },
     { title: 'Member', key: 'member',

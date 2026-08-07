@@ -4,7 +4,7 @@ import {
   Table, Tag, Space, Tabs, Statistic, message, Divider, Typography, Modal, Radio
 } from 'antd'
 import {
-  PlusOutlined, UnorderedListOutlined, BarChartOutlined, SearchOutlined
+  PlusOutlined, UnorderedListOutlined, BarChartOutlined, SearchOutlined, DeleteOutlined
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import * as collectionsApi from '../../api/collections'
@@ -96,7 +96,7 @@ const CollectionsPage = () => {
   const loadMembersForSelect = useCallback(async (search = '') => {
     setMembersLoading(true)
     try {
-      const res = await membersApi.getMembers({ search, status: 'active', page_size: 100 })
+      const res = await membersApi.getMembers({ search, page_size: 100 })
       setMembers(res.data.results || res.data)
     } catch (_) {}
     setMembersLoading(false)
@@ -317,6 +317,30 @@ const CollectionsPage = () => {
     }
   }
 
+  const handleDeleteEntry = (row) => {
+    Modal.confirm({
+      title: 'Are you sure you want to delete this collection entry?',
+      content: (
+        <div>
+          <p>This will permanently delete the entry for <strong>₹{parseFloat(row.amount).toFixed(2)}</strong>.</p>
+          <p style={{ color: '#ef4444', fontWeight: 600 }}>WARNING: This deletion will also automatically revert any associated loan repayments, welfare installment records, deposits, or masavari payments connected to this entry!</p>
+        </div>
+      ),
+      okText: 'Yes, Delete',
+      okType: 'danger',
+      cancelText: 'No, Keep',
+      async onOk() {
+        try {
+          await collectionsApi.deleteDailyEntry(row.id)
+          message.success('Entry deleted and linked records reverted successfully.')
+          loadEntries()
+        } catch (err) {
+          message.error(err?.response?.data?.message || 'Failed to delete entry.')
+        }
+      }
+    })
+  }
+
   const columns = [
     {
       title: 'Date',
@@ -375,9 +399,20 @@ const CollectionsPage = () => {
       title: 'Recorded By',
       dataIndex: 'recorded_by_name',
       key: 'recorded_by_name',
-      render: (v) => v || 'System'
-    }
-  ]
+    },
+    canWrite ? {
+      title: 'Action',
+      key: 'action',
+      render: (_, row) => (
+        <Button 
+          type="text" 
+          danger 
+          icon={<DeleteOutlined />} 
+          onClick={() => handleDeleteEntry(row)}
+        />
+      )
+    } : {}
+  ].filter(c => Object.keys(c).length > 0)
 
   return (
     <div>

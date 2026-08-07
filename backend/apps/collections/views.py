@@ -287,3 +287,58 @@ class DailySummaryView(APIView):
                 } for c in categories
             ]
         })
+
+
+class DailyEntryDetailView(generics.RetrieveDestroyAPIView):
+    """GET/DELETE /api/collections/daily/{id}/ — retrieve or delete collection entry with cascading reversal."""
+    queryset = DailyEntry.objects.all()
+    serializer_class = DailyEntrySerializer
+    permission_classes = [IsAuthenticated, IsAdminOrStaffOrReadOnly]
+
+    def perform_destroy(self, instance):
+        from decimal import Decimal
+        from apps.chits.models import ChitPayment
+        from apps.loans.models import LoanRepayment
+        from apps.dues.models import Deposit, MasavariPayment
+        
+        # 1. Revert Chit (Welfare) Payment
+        if instance.chit_payment:
+            payment = instance.chit_payment
+            payment.amount_paid -= instance.amount
+            if payment.amount_paid <= 0:
+                payment.delete()
+            else:
+                payment.is_paid = False
+                payment.save()
+
+        # 2. Revert Loan Repayment / EMI
+        if instance.loan_repayment:
+            repayment = instance.loan_repayment
+            loan = repayment.loan
+            repayment.amount_paid = Decimal('0.00')
+            repayment.principal_paid = Decimal('0.00')
+            repayment.is_paid = False
+            repayment.paid_date = None
+            repayment.save(skip_update=True)
+            loan.update_outstanding_balance()
+
+        # 3. Revert Deposit (Registration Fee / Share Capital)
+        if instance.deposit:
+            instance.deposit.delete()
+
+        # 4. Revert Masavari Payment
+        if instance.category == 'masavari' and instance.member:
+            import re
+            match = re.search(r'paid for (\d+)/(\d+)', instance.description)
+            if match:
+                month = int(match.group(1))
+                year = int(match.group(2))
+                payment = MasavariPayment.objects.filter(member=instance.member, year=year, month=month).first()
+            else:
+                payment = MasavariPayment.objects.filter(member=instance.member, paid_date=instance.date, amount=instance.amount).first()
+            
+            if payment:
+                payment.delete()
+
+        # 5. Delete the DailyEntry itself
+        instance.delete()
