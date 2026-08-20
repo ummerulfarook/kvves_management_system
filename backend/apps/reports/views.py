@@ -519,13 +519,31 @@ class PeriodReportView(APIView):
         ).count()
 
         # Loan repayments
-        loan_repayments = LoanRepayment.objects.filter(
-            is_paid=True, paid_date__gte=start, paid_date__lte=end
+        loan_repayment_de = DailyEntry.objects.filter(
+            category='loan_emi', entry_type='income', date__gte=start, date__lte=end
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+
+        loan_repayment_lr = LoanRepayment.objects.filter(
+            is_paid=True
+        ).filter(
+            models.Q(paid_date__gte=start, paid_date__lte=end) |
+            models.Q(paid_date__isnull=True, due_date__gte=start, due_date__lte=end)
         ).aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
 
-        loan_repayment_count = LoanRepayment.objects.filter(
-            is_paid=True, paid_date__gte=start, paid_date__lte=end
+        loan_repayments = max(loan_repayment_de, loan_repayment_lr)
+
+        loan_repayment_count_de = DailyEntry.objects.filter(
+            category='loan_emi', entry_type='income', date__gte=start, date__lte=end
         ).count()
+
+        loan_repayment_count_lr = LoanRepayment.objects.filter(
+            is_paid=True
+        ).filter(
+            models.Q(paid_date__gte=start, paid_date__lte=end) |
+            models.Q(paid_date__isnull=True, due_date__gte=start, due_date__lte=end)
+        ).count()
+
+        loan_repayment_count = max(loan_repayment_count_de, loan_repayment_count_lr)
 
         # Dues collected
         dues_collected = Due.objects.filter(
@@ -591,11 +609,22 @@ class PeriodReportView(APIView):
 
         # Loan repayments list
         loan_repayments_list = list(LoanRepayment.objects.filter(
-            is_paid=True, paid_date__gte=start, paid_date__lte=end
+            is_paid=True
+        ).filter(
+            models.Q(paid_date__gte=start, paid_date__lte=end) |
+            models.Q(paid_date__isnull=True, due_date__gte=start, due_date__lte=end)
         ).select_related('loan__member').values(
             'id', 'loan__member__full_name', 'loan__member__member_no', 'loan__loan_no',
             'instalment_no', 'amount_paid', 'principal_paid', 'interest_paid', 'paid_date', 'payment_mode'
         ))
+        for item in loan_repayments_list:
+            if not item.get('amount_paid') or item.get('amount_paid') <= 0:
+                try:
+                    lr_obj = LoanRepayment.objects.select_related('loan').get(pk=item['id'])
+                    if lr_obj and lr_obj.loan:
+                        item['amount_paid'] = lr_obj.loan.emi_amount
+                except Exception:
+                    pass
 
         # Masavari list
         masavari_list = list(MasavariPayment.objects.filter(
@@ -761,6 +790,7 @@ class LoanRepaymentsReportView(APIView):
 
     def get(self, request):
         from apps.loans.models import LoanRepayment
+        from django.db import models
         import datetime
         
         start_date = request.query_params.get('start_date')
@@ -770,39 +800,71 @@ class LoanRepaymentsReportView(APIView):
         
         qs = LoanRepayment.objects.select_related(
             'loan__member'
-        ).order_by('due_date')
+        )
         
-        if start_date:
-            qs = qs.filter(due_date__gte=start_date)
-        if end_date:
-            qs = qs.filter(due_date__lte=end_date)
         if member_id:
             qs = qs.filter(loan__member_id=member_id)
             
         today = timezone.now().date()
         if status == 'paid':
             qs = qs.filter(is_paid=True)
+            if start_date:
+                qs = qs.filter(models.Q(paid_date__gte=start_date) | models.Q(paid_date__isnull=True, due_date__gte=start_date))
+            if end_date:
+                qs = qs.filter(models.Q(paid_date__lte=end_date) | models.Q(paid_date__isnull=True, due_date__lte=end_date))
+            qs = qs.order_by('paid_date', 'due_date')
         elif status == 'pending':
             qs = qs.filter(is_paid=False)
+            if start_date:
+                qs = qs.filter(due_date__gte=start_date)
+            if end_date:
+                qs = qs.filter(due_date__lte=end_date)
+            qs = qs.order_by('due_date')
         elif status == 'overdue':
             qs = qs.filter(is_paid=False, due_date__lt=today)
+            if start_date:
+                qs = qs.filter(due_date__gte=start_date)
+            if end_date:
+                qs = qs.filter(due_date__lte=end_date)
+            qs = qs.order_by('due_date')
+        else:
+            if start_date and end_date:
+                qs = qs.filter(
+                    models.Q(is_paid=True, paid_date__gte=start_date, paid_date__lte=end_date) |
+                    models.Q(is_paid=True, paid_date__isnull=True, due_date__gte=start_date, due_date__lte=end_date) |
+                    models.Q(is_paid=False, due_date__gte=start_date, due_date__lte=end_date)
+                )
+            elif start_date:
+                qs = qs.filter(
+                    models.Q(is_paid=True, paid_date__gte=start_date) |
+                    models.Q(is_paid=True, paid_date__isnull=True, due_date__gte=start_date) |
+                    models.Q(is_paid=False, due_date__gte=start_date)
+                )
+            elif end_date:
+                qs = qs.filter(
+                    models.Q(is_paid=True, paid_date__lte=end_date) |
+                    models.Q(is_paid=True, paid_date__isnull=True, due_date__lte=end_date) |
+                    models.Q(is_paid=False, due_date__lte=end_date)
+                )
+            qs = qs.order_by('due_date')
             
         data = []
         for r in qs:
+            actual_amount = r.amount_paid if (r.is_paid and r.amount_paid and r.amount_paid > 0) else (r.loan.emi_amount if r.loan else Decimal('0.00'))
             data.append({
                 'id': r.id,
-                'member_name': r.loan.member.full_name,
-                'member_no': r.loan.member.member_no,
-                'loan_no': r.loan.loan_no,
+                'member_name': r.loan.member.full_name if r.loan and r.loan.member else '',
+                'member_no': r.loan.member.member_no if r.loan and r.loan.member else '',
+                'loan_no': r.loan.loan_no if r.loan else '',
                 'instalment_no': r.instalment_no,
-                'amount_paid': str(r.loan.emi_amount) if not r.is_paid else str(r.amount_paid),
-                'due_date': r.due_date.isoformat(),
+                'amount_paid': str(actual_amount),
+                'due_date': r.due_date.isoformat() if r.due_date else '',
                 'paid_date': r.paid_date.isoformat() if r.paid_date else None,
                 'payment_mode': r.payment_mode,
                 'receipt_no': r.receipt_no,
                 'is_paid': r.is_paid,
-                'is_overdue': not r.is_paid and r.due_date < today,
-                'days_overdue': (today - r.due_date).days if (not r.is_paid and r.due_date < today) else 0,
+                'is_overdue': not r.is_paid and r.due_date and r.due_date < today,
+                'days_overdue': (today - r.due_date).days if (not r.is_paid and r.due_date and r.due_date < today) else 0,
             })
             
         return Response({'results': data})

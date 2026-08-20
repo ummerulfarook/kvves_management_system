@@ -353,13 +353,11 @@ class ChitGroupSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         # Auto-calculate monthly instalment
-        chit_value = attrs.get('chit_value')
-        number_of_divisions = attrs.get('number_of_divisions')
-        eff_divs = 1 if (number_of_divisions is None or number_of_divisions == 0) else number_of_divisions
-        total_members = attrs.get('total_members')
-        if chit_value and total_members:
+        chit_value = attrs.get('chit_value') or (self.instance.chit_value if self.instance else None)
+        duration_months = attrs.get('duration_months') or (self.instance.duration_months if self.instance else None)
+        if chit_value and duration_months:
             from decimal import Decimal
-            attrs['monthly_instalment'] = (Decimal(str(chit_value)) * Decimal(str(eff_divs))) / Decimal(str(total_members))
+            attrs['monthly_instalment'] = Decimal(str(chit_value)) / Decimal(str(duration_months))
 
         start = attrs.get('start_date')
         end = attrs.get('end_date')

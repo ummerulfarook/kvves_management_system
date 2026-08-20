@@ -99,6 +99,17 @@ class LoanSerializer(serializers.ModelSerializer):
                 # Check how many repayments have been paid
                 paid_repayments = list(loan.repayments.filter(is_paid=True).order_by('instalment_no'))
                 paid_count = len(paid_repayments)
+
+                # Re-calculate due dates for paid repayments if disbursement date changed
+                if disb_changed:
+                    is_daily = loan.repayment_frequency == 'daily'
+                    disb_date = loan.disbursement_date or timezone.now().date()
+                    for r in paid_repayments:
+                        if is_daily:
+                            r.due_date = disb_date + datetime.timedelta(days=r.instalment_no)
+                        else:
+                            r.due_date = disb_date + relativedelta(months=r.instalment_no)
+                        r.save(skip_update=True)
                 
                 # Recreate remaining unpaid repayments
                 total_paid_amt = sum(r.amount_paid for r in paid_repayments)

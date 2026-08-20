@@ -78,6 +78,12 @@ const WelfarePage = () => {
   const [editingMemberEnrollment, setEditingMemberEnrollment] = useState(null)
   const [editMemberForm] = Form.useForm()
 
+  // View Payments states
+  const [paymentsModal, setPaymentsModal] = useState(false)
+  const [selectedEnrollment, setSelectedEnrollment] = useState(null)
+  const [enrollmentPayments, setEnrollmentPayments] = useState([])
+  const [loadingPayments, setLoadingPayments] = useState(false)
+
   // Edit Welfare Scheme states
   const [editGroupModal, setEditGroupModal] = useState(false)
   const [editingGroup, setEditingGroup] = useState(null)
@@ -87,6 +93,7 @@ const WelfarePage = () => {
   const watchChitValue = Form.useWatch('chit_value', groupForm)
   const watchDivisions = Form.useWatch('number_of_divisions', groupForm)
   const watchTotalMembers = Form.useWatch('total_members', groupForm)
+  const watchDurationMonths = Form.useWatch('duration_months', groupForm)
 
   const isRegisteredMember = Form.useWatch('is_registered_member', enrollForm)
   const guarantor1Type = Form.useWatch('guarantor1_type', enrollForm)
@@ -100,6 +107,20 @@ const WelfarePage = () => {
   const guarantor2TypeEdit = Form.useWatch('guarantor2_type', editMemberForm)
 
   const handoverPaymentMode = Form.useWatch('payout_payment_mode', handoverForm)
+
+  const handleViewPayments = async (enrollment) => {
+    setSelectedEnrollment(enrollment)
+    setPaymentsModal(true)
+    setLoadingPayments(true)
+    try {
+      const res = await chitsApi.getPayments(enrollment.id)
+      setEnrollmentPayments(res.data.results || res.data)
+    } catch (err) {
+      message.error('Failed to load installment payments.')
+    } finally {
+      setLoadingPayments(false)
+    }
+  }
 
   const openEditPayoutModal = (enrollment) => {
     setEditingEnrollment(enrollment)
@@ -1077,6 +1098,9 @@ const WelfarePage = () => {
                             ) : (
                               <Tag color="orange">Non-Member</Tag>
                             )}
+                            <Button size="small" icon={<EyeOutlined />} onClick={() => handleViewPayments(row)} style={{ color: '#2563eb' }}>
+                              View Payments
+                            </Button>
                             {canWrite && (
                               <>
                                 <Button size="small" icon={<EditOutlined />} onClick={() => openEditMemberModal(row)}>
@@ -1378,8 +1402,8 @@ const WelfarePage = () => {
                   Calculated Monthly Installment (Month 1):
                 </Text>
                 <Title level={4} style={{ color: '#10b981', margin: '4px 0 0' }}>
-                  ₹{(watchChitValue && watchTotalMembers)
-                    ? Math.round((watchChitValue * ((watchDivisions === undefined || watchDivisions === null || watchDivisions < 1) ? 1 : watchDivisions)) / watchTotalMembers).toLocaleString('en-IN')
+                  ₹{(watchChitValue && watchDurationMonths)
+                    ? Math.round(watchChitValue / watchDurationMonths).toLocaleString('en-IN')
                     : '0'}
                 </Title>
               </Card>
@@ -2208,6 +2232,97 @@ const WelfarePage = () => {
       </Modal>
 
       {/* Payment Modal */}
+      {/* View Payments Modal */}
+      <Modal
+        title={
+          <div style={{ paddingBottom: 8, borderBottom: '1px solid #f0f0f0' }}>
+            <span style={{ fontSize: 16, fontWeight: 'bold' }}>Installment Payment History</span>
+            <div style={{ fontSize: 13, fontWeight: 'normal', color: '#6b7280', marginTop: 4 }}>
+              Ticket {selectedEnrollment?.ticket_number} — {selectedEnrollment?.member_name || selectedEnrollment?.non_member_name || 'Non-Member'}
+            </div>
+          </div>
+        }
+        open={paymentsModal}
+        onCancel={() => setPaymentsModal(false)}
+        footer={[
+          <Button key="close" type="primary" onClick={() => setPaymentsModal(false)}>
+            Close
+          </Button>
+        ]}
+        width={720}
+      >
+        <Table
+          dataSource={enrollmentPayments}
+          loading={loadingPayments}
+          rowKey="id"
+          pagination={false}
+          size="small"
+          scroll={{ y: 350 }}
+          columns={[
+            {
+              title: 'Month',
+              dataIndex: 'month_number',
+              key: 'month_number',
+              width: 70,
+              align: 'center',
+              render: (m) => <span style={{ fontWeight: 600 }}>{m}</span>
+            },
+            {
+              title: 'Due Date',
+              dataIndex: 'due_date',
+              key: 'due_date',
+              width: 100,
+              render: (d) => formatDate(d)
+            },
+            {
+              title: 'Installment (₹)',
+              dataIndex: 'installment_amount',
+              key: 'installment_amount',
+              width: 100,
+              align: 'right',
+              render: (v) => formatCurrency(v)
+            },
+            {
+              title: 'Paid (₹)',
+              dataIndex: 'amount_paid',
+              key: 'amount_paid',
+              width: 100,
+              align: 'right',
+              render: (v) => formatCurrency(v)
+            },
+            {
+              title: 'Paid Date',
+              dataIndex: 'paid_date',
+              key: 'paid_date',
+              width: 100,
+              render: (d) => d ? formatDate(d) : '-'
+            },
+            {
+              title: 'Mode',
+              dataIndex: 'payment_mode',
+              key: 'payment_mode',
+              width: 80,
+              render: (m, row) => row.is_paid ? <Tag>{m?.toUpperCase()}</Tag> : '-'
+            },
+            {
+              title: 'Receipt',
+              dataIndex: 'receipt_no',
+              key: 'receipt_no',
+              width: 100,
+              render: (r) => r || '-'
+            },
+            {
+              title: 'Status',
+              dataIndex: 'is_paid',
+              key: 'is_paid',
+              width: 80,
+              align: 'center',
+              render: (paid) => paid ? <Tag color="green">Paid</Tag> : <Tag color="red">Unpaid</Tag>
+            }
+          ]}
+        />
+      </Modal>
+
       <PaymentModal
         open={paymentModal.open}
         onClose={() => setPaymentModal({ open: false, payment: null })}
