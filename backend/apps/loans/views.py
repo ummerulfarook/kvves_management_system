@@ -193,6 +193,7 @@ class LoanCloseView(APIView):
 
     def close_loan(self, request, pk):
         from decimal import Decimal
+        from django.db import transaction
         try:
             loan = Loan.objects.get(pk=pk)
         except Loan.DoesNotExist:
@@ -204,51 +205,51 @@ class LoanCloseView(APIView):
         payment_mode = request.data.get('payment_mode', 'cash')
         receipt_no = request.data.get('receipt_no', '')
         remarks = request.data.get('remarks', 'Loan closed & cleared.')
-        today = timezone.now().date()
+        from apps.accounts.utils import get_local_today
+        today = get_local_today()
 
         outstanding = loan.outstanding_balance
 
-        if outstanding > 0:
-            # Create a final repayment record to pay off the remaining balance
-            last_inst = loan.repayments.order_by('-instalment_no').first()
-            next_inst_no = (last_inst.instalment_no + 1) if last_inst else 1
+        with transaction.atomic():
+            if outstanding > 0:
+                last_inst = loan.repayments.order_by('-instalment_no').first()
+                next_inst_no = (last_inst.instalment_no + 1) if last_inst else 1
 
-            repayment = LoanRepayment.objects.create(
-                loan=loan,
-                instalment_no=next_inst_no,
-                amount_paid=outstanding,
-                principal_paid=outstanding,
-                interest_paid=0,
-                due_date=today,
-                paid_date=today,
-                payment_mode=payment_mode,
-                receipt_no=receipt_no,
-                remarks=remarks,
-                outstanding_after=Decimal('0.00'),
-                is_paid=True,
-                recorded_by=request.user
-            )
-
-            try:
-                from apps.activities.models import ActivityLog
-                ActivityLog.objects.create(
-                    member=loan.member,
-                    activity_type='loan_repayment',
-                    description=f"Loan {loan.loan_no} — Closed in full. Final payment of ₹{outstanding} recorded.",
-                    amount=outstanding,
-                    reference_id=str(repayment.id),
-                    reference_type='LoanRepayment',
-                    performed_by=request.user,
+                repayment = LoanRepayment.objects.create(
+                    loan=loan,
+                    instalment_no=next_inst_no,
+                    amount_paid=outstanding,
+                    principal_paid=outstanding,
+                    interest_paid=0,
+                    due_date=today,
+                    paid_date=today,
+                    payment_mode=payment_mode,
+                    receipt_no=receipt_no,
+                    outstanding_after=Decimal('0.00'),
+                    is_paid=True,
+                    recorded_by=request.user
                 )
-            except Exception:
-                pass
 
-        # Close the loan
-        loan.status = 'closed'
-        loan.outstanding_balance = Decimal('0.00')
-        loan.save()
+                try:
+                    from apps.activities.models import ActivityLog
+                    ActivityLog.objects.create(
+                        member=loan.member,
+                        activity_type='loan_repayment',
+                        description=f"Loan {loan.loan_no} — Closed in full. Final payment of ₹{outstanding} recorded.",
+                        amount=outstanding,
+                        reference_id=str(repayment.id),
+                        reference_type='LoanRepayment',
+                        performed_by=request.user,
+                    )
+                except Exception:
+                    pass
 
-        return Response({'message': f'Loan closed successfully. Outstanding balance of {outstanding} cleared.'})
+            loan.status = 'closed'
+            loan.outstanding_balance = Decimal('0.00')
+            loan.save(update_fields=['status', 'outstanding_balance'])
+            loan.update_outstanding_balance()
+
+        return Response({'message': f'Loan closed successfully. Outstanding balance of ₹{outstanding} cleared.'})
 
 
 class LoanRepaymentListCreateView(generics.ListCreateAPIView):

@@ -3,8 +3,9 @@ from .models import DailyEntry
 
 
 class DailyEntrySerializer(serializers.ModelSerializer):
-    member_name = serializers.CharField(source='member.full_name', read_only=True)
-    member_no = serializers.CharField(source='member.member_no', read_only=True)
+    member_name = serializers.CharField(source='member.full_name', read_only=True, default='')
+    member_no = serializers.CharField(source='member.member_no', read_only=True, default='')
+    description = serializers.CharField(required=False, allow_blank=True, allow_null=True, default='')
     recorded_by_name = serializers.SerializerMethodField()
 
     class Meta:

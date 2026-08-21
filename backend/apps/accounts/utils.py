@@ -51,3 +51,9 @@ def get_client_ip(request):
     if x_forwarded_for:
         return x_forwarded_for.split(',')[0].strip()
     return request.META.get('REMOTE_ADDR')
+
+
+def get_local_today():
+    """Returns today's date in current local timezone (Asia/Kolkata)."""
+    from django.utils import timezone
+    return timezone.localtime(timezone.now()).date()

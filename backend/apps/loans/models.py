@@ -86,14 +86,10 @@ class Loan(models.Model):
 
         for r in repayments:
             paid_amt = r.amount_paid or Decimal('0.00')
-            if r.is_paid:
-                r.principal_paid = paid_amt
-                r.interest_paid = Decimal('0.00')
-                running_balance -= paid_amt
-                total_principal_paid += paid_amt
-            else:
-                running_balance -= paid_amt
-                total_principal_paid += paid_amt
+            r.principal_paid = paid_amt
+            r.interest_paid = Decimal('0.00')
+            running_balance -= paid_amt
+            total_principal_paid += paid_amt
 
             if running_balance < Decimal('0.00'):
                 running_balance = Decimal('0.00')
@@ -101,8 +97,9 @@ class Loan(models.Model):
             r.save(update_fields=['principal_paid', 'interest_paid', 'outstanding_after'], skip_update=True)
 
         self.outstanding_balance = max(self.loan_amount - total_principal_paid, Decimal('0.00'))
-        if self.outstanding_balance == Decimal('0.00') and self.status == 'active':
-            self.status = 'closed'
+        if self.outstanding_balance == Decimal('0.00'):
+            if self.status in ['active', 'pending']:
+                self.status = 'closed'
             for r in repayments:
                 if not r.is_paid:
                     r.is_paid = True
@@ -110,6 +107,9 @@ class Loan(models.Model):
                     r.principal_paid = Decimal('0.00')
                     r.outstanding_after = Decimal('0.00')
                     r.save(update_fields=['is_paid', 'amount_paid', 'principal_paid', 'outstanding_after'], skip_update=True)
+        else:
+            if self.status == 'closed':
+                self.status = 'active'
 
         self.save(update_fields=['outstanding_balance', 'status'])
 

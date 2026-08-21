@@ -850,7 +850,7 @@ class LoanRepaymentsReportView(APIView):
             
         data = []
         for r in qs:
-            actual_amount = r.amount_paid if (r.is_paid and r.amount_paid and r.amount_paid > 0) else (r.loan.emi_amount if r.loan else Decimal('0.00'))
+            actual_amount = (r.amount_paid if (r.amount_paid and r.amount_paid > 0) else (r.loan.emi_amount if r.loan else Decimal('0.00'))) if r.is_paid else Decimal('0.00')
             data.append({
                 'id': r.id,
                 'member_name': r.loan.member.full_name if r.loan and r.loan.member else '',

@@ -1070,7 +1070,9 @@ const LoanReport = () => {
       `
     }).join('')
 
-    const totalPaid = results.reduce((sum, item) => sum + parseFloat(item.amount_paid || 0), 0)
+    const totalPaid = results
+      .filter(item => item.is_paid)
+      .reduce((sum, item) => sum + Number(parseFloat(item.amount_paid || 0).toFixed(2)), 0)
 
     printWindow.document.write(`
       <html>
@@ -1108,7 +1110,7 @@ const LoanReport = () => {
             <tbody>
               ${rows}
               <tr class="total-row">
-                <td colspan="4" style="text-align: right;">Total Amount:</td>
+                <td colspan="4" style="text-align: right;">Total Amount Received:</td>
                 <td>₹${totalPaid.toFixed(2)}</td>
                 <td colspan="3"></td>
               </tr>

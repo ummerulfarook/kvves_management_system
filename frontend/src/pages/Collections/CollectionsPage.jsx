@@ -4,7 +4,7 @@ import {
   Table, Tag, Space, Tabs, Statistic, message, Divider, Typography, Modal, Radio
 } from 'antd'
 import {
-  PlusOutlined, UnorderedListOutlined, BarChartOutlined, SearchOutlined, DeleteOutlined
+  PlusOutlined, UnorderedListOutlined, BarChartOutlined, SearchOutlined, DeleteOutlined, EditOutlined
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import * as collectionsApi from '../../api/collections'
@@ -26,6 +26,7 @@ const safeParseFloat = (val) => {
 const CollectionsPage = () => {
   const { canWrite } = usePermissions()
   const [form] = Form.useForm()
+  const [editForm] = Form.useForm()
 
   const [activeTab, setActiveTab] = useState('entry')
 
@@ -34,6 +35,9 @@ const CollectionsPage = () => {
   const [summary, setSummary] = useState(null)
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+
+  const [editModal, setEditModal] = useState(false)
+  const [editingEntry, setEditingEntry] = useState(null)
 
   // Filters
   const [filterDate, setFilterDate] = useState(dayjs())
@@ -341,6 +345,38 @@ const CollectionsPage = () => {
     })
   }
 
+  const handleEditEntry = (row) => {
+    setEditingEntry(row)
+    editForm.setFieldsValue({
+      amount: safeParseFloat(row.amount),
+      payment_mode: row.payment_mode || 'cash',
+      date: row.date ? dayjs(row.date) : dayjs(),
+      description: row.description || '',
+      receipt_no: row.receipt_no || '',
+    })
+    setEditModal(true)
+  }
+
+  const handleUpdateEntrySubmit = async () => {
+    setSubmitting(true)
+    try {
+      const values = await editForm.validateFields()
+      const payload = {
+        ...values,
+        date: values.date ? values.date.format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD'),
+      }
+      await collectionsApi.updateDailyEntry(editingEntry.id, payload)
+      message.success('Collection entry updated successfully!')
+      setEditModal(false)
+      setEditingEntry(null)
+      loadEntries()
+    } catch (err) {
+      message.error(err?.response?.data?.message || 'Failed to update entry.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   const columns = [
     {
       title: 'Date',
@@ -404,12 +440,19 @@ const CollectionsPage = () => {
       title: 'Action',
       key: 'action',
       render: (_, row) => (
-        <Button 
-          type="text" 
-          danger 
-          icon={<DeleteOutlined />} 
-          onClick={() => handleDeleteEntry(row)}
-        />
+        <Space>
+          <Button 
+            type="text" 
+            icon={<EditOutlined />} 
+            onClick={() => handleEditEntry(row)}
+          />
+          <Button 
+            type="text" 
+            danger 
+            icon={<DeleteOutlined />} 
+            onClick={() => handleDeleteEntry(row)}
+          />
+        </Space>
       )
     } : {}
   ].filter(c => Object.keys(c).length > 0)
@@ -683,7 +726,7 @@ const CollectionsPage = () => {
                       </Form.Item>
                     </Col>
                     <Col xs={24}>
-                      <Form.Item label="Description" name="description" rules={[{ required: true, message: 'Enter description' }]}>
+                      <Form.Item label="Description (optional)" name="description">
                         <TextArea rows={2} placeholder="Voucher description, details, or notes..." />
                       </Form.Item>
                     </Col>
@@ -789,8 +832,63 @@ const CollectionsPage = () => {
               </div>
             )
           }
-        ]}
-      />
+      {/* Edit Entry Modal */}
+      <Modal
+        title="Edit Collection Entry"
+        open={editModal}
+        onCancel={() => { setEditModal(false); setEditingEntry(null) }}
+        onOk={handleUpdateEntrySubmit}
+        confirmLoading={submitting}
+        okText="Save Changes"
+        width={500}
+      >
+        <Form form={editForm} layout="vertical">
+          {editingEntry && (
+            <div style={{ marginBottom: 16, background: 'var(--color-bg-hover)', padding: 12, borderRadius: 6, border: '1px solid var(--color-border)' }}>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+                Category: <strong style={{ textTransform: 'capitalize' }}>{editingEntry.category?.replace(/_/g, ' ')}</strong> ({editingEntry.entry_type})
+              </Text>
+              {editingEntry.member_name && (
+                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+                  Member: <strong>{editingEntry.member_name} ({editingEntry.member_no})</strong>
+                </Text>
+              )}
+            </div>
+          )}
+          <Row gutter={16}>
+            <Col xs={12}>
+              <Form.Item label="Amount (₹)" name="amount" rules={[{ required: true, message: 'Enter amount' }]}>
+                <InputNumber min={0} style={{ width: '100%' }} prefix="₹" />
+              </Form.Item>
+            </Col>
+            <Col xs={12}>
+              <Form.Item label="Payment Mode" name="payment_mode" rules={[{ required: true }]}>
+                <Select>
+                  <Option value="cash">Cash</Option>
+                  <Option value="bank_transfer">Bank Transfer</Option>
+                  <Option value="upi">UPI</Option>
+                  <Option value="cheque">Cheque</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col xs={12}>
+              <Form.Item label="Date" name="date" rules={[{ required: true }]}>
+                <DatePicker style={{ width: '100%' }} format="DD/MM/YYYY" />
+              </Form.Item>
+            </Col>
+            <Col xs={12}>
+              <Form.Item label="Receipt / Voucher No" name="receipt_no">
+                <Input placeholder="Receipt ref" />
+              </Form.Item>
+            </Col>
+            <Col xs={24}>
+              <Form.Item label="Description (optional)" name="description">
+                <TextArea rows={2} placeholder="Description or details..." />
+              </Form.Item>
+            </Col>
+          </Row>
+        </Form>
+      </Modal>
     </div>
   )
 }

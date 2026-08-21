@@ -23,6 +23,8 @@ class DailyEntryListCreateView(generics.ListCreateAPIView):
         # Filter by date range
         date_param = self.request.query_params.get('date')
         if date_param:
+            if isinstance(date_param, str) and 'T' in date_param:
+                date_param = date_param.split('T')[0]
             qs = qs.filter(date=date_param)
 
         month_param = self.request.query_params.get('month')
@@ -51,12 +53,27 @@ class DailyEntryListCreateView(generics.ListCreateAPIView):
         return qs
 
     def create(self, request, *args, **kwargs):
+        from django.db import transaction
+        from apps.accounts.utils import get_local_today
         # We override create to handle automatic payment logging for members
         data = request.data.copy()
         category = data.get('category')
         member_id = data.get('member')
         amount = data.get('amount')
-        date_str = data.get('date') or timezone.now().date().isoformat()
+        date_str = data.get('date')
+        if not date_str:
+            date_str = get_local_today().isoformat()
+        elif isinstance(date_str, str) and 'T' in date_str:
+            date_str = date_str.split('T')[0]
+        data['date'] = date_str
+
+        # Optional description handling
+        desc = data.get('description')
+        if not desc or not str(desc).strip():
+            cat_label = category.replace('_', ' ').title() if category else 'Collection'
+            data['description'] = f"{cat_label} entry"
+            request._full_data = data
+
         payment_mode = data.get('payment_mode', 'cash')
 
         if not amount:
@@ -64,245 +81,242 @@ class DailyEntryListCreateView(generics.ListCreateAPIView):
 
         amount = float(amount)
 
-        if category == 'welfare_payment':
-            enrollment_id = data.get('welfare_group') or data.get('enrollment')
-            month_number = data.get('month_number')
-            if not enrollment_id or not month_number:
-                return Response({'error': True, 'message': 'Welfare Scheme enrollment and Month Number are required.'}, status=400)
+        with transaction.atomic():
+            if category == 'welfare_payment':
+                enrollment_id = data.get('welfare_group') or data.get('enrollment')
+                month_number = data.get('month_number')
+                if not enrollment_id or not month_number:
+                    return Response({'error': True, 'message': 'Welfare Scheme enrollment and Month Number are required.'}, status=400)
 
-            from apps.chits.models import ChitEnrollment, ChitPayment
-            enrollment = None
-            try:
-                enrollment = ChitEnrollment.objects.select_related('member', 'chit_group').get(pk=enrollment_id)
-            except (ChitEnrollment.DoesNotExist, ValueError):
-                if member_id:
-                    enrollment = ChitEnrollment.objects.filter(member_id=member_id, chit_group_id=enrollment_id).first()
+                from apps.chits.models import ChitEnrollment, ChitPayment
+                enrollment = None
+                try:
+                    enrollment = ChitEnrollment.objects.select_related('member', 'chit_group').get(pk=enrollment_id)
+                except (ChitEnrollment.DoesNotExist, ValueError):
+                    if member_id:
+                        enrollment = ChitEnrollment.objects.filter(member_id=member_id, chit_group_id=enrollment_id).first()
 
-            if not enrollment:
-                return Response({'error': True, 'message': 'Selected welfare enrollment could not be found.'}, status=400)
+                if not enrollment:
+                    return Response({'error': True, 'message': 'Selected welfare enrollment could not be found.'}, status=400)
 
-            from decimal import Decimal
-            payment, created = ChitPayment.objects.get_or_create(
-                enrollment=enrollment,
-                month_number=int(month_number),
-                defaults={
-                    'installment_amount': enrollment.chit_group.monthly_instalment,
-                    'amount_paid': Decimal('0.00'),
-                    'due_date': date_str,
-                }
-            )
-            amount_dec = Decimal(str(amount))
-            payment.amount_paid += amount_dec
-            payment.paid_date = date_str
-            payment.payment_mode = payment_mode
-            payment.recorded_by = request.user
-            if payment.amount_paid >= payment.installment_amount:
-                payment.is_paid = True
-            else:
-                payment.is_paid = False
-            payment.save()
+                from decimal import Decimal
+                payment, created = ChitPayment.objects.get_or_create(
+                    enrollment=enrollment,
+                    month_number=int(month_number),
+                    defaults={
+                        'installment_amount': enrollment.chit_group.monthly_instalment,
+                        'amount_paid': Decimal('0.00'),
+                        'due_date': date_str,
+                    }
+                )
+                amount_dec = Decimal(str(amount))
+                payment.amount_paid += amount_dec
+                payment.paid_date = date_str
+                payment.payment_mode = payment_mode
+                payment.recorded_by = request.user
+                if payment.amount_paid >= payment.installment_amount:
+                    payment.is_paid = True
+                else:
+                    payment.is_paid = False
+                payment.save()
 
-            entry = DailyEntry.objects.create(
-                date=date_str,
-                entry_type='income',
-                category='welfare_payment',
-                amount=amount_dec,
-                description=f"Welfare Payment — Month {payment.month_number} for {enrollment.member.full_name if enrollment.member else enrollment.non_member_name} (Ticket #{enrollment.ticket_number})",
-                member=enrollment.member,
-                payment_mode=payment_mode,
-                recorded_by=request.user,
-                chit_payment=payment,
-            )
-
-            serializer = self.get_serializer(entry)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-
-        elif category == 'loan_emi':
-            loan_id = data.get('loan')
-            instalment_no = data.get('month_number')
-            if not member_id or not loan_id or not instalment_no:
-                return Response({'error': True, 'message': 'Member, Loan, and Installment Number are required.'}, status=400)
-
-            from apps.loans.models import Loan, LoanRepayment
-            try:
-                loan = Loan.objects.get(pk=loan_id, member_id=member_id)
-            except Loan.DoesNotExist:
-                return Response({'error': True, 'message': 'Loan not found for this member.'}, status=400)
-
-            loan.apply_loan_payment(
-                start_instalment_no=int(instalment_no),
-                amount=amount,
-                paid_date=date_str,
-                payment_mode=payment_mode,
-                recorded_by=request.user
-            )
-
-            repayment = LoanRepayment.objects.filter(loan=loan, instalment_no=int(instalment_no)).first()
-            entry = DailyEntry.objects.filter(loan_repayment=repayment).first() if repayment else None
-            if entry:
-                serializer = self.get_serializer(entry)
-                return Response(serializer.data, status=status.HTTP_201_CREATED)
-            else:
                 entry = DailyEntry.objects.create(
                     date=date_str,
                     entry_type='income',
-                    category='loan_emi',
-                    amount=amount,
-                    description=f"Loan EMI Payment — Installment {instalment_no} for {loan.member.full_name} (Loan {loan.loan_no})",
-                    member=loan.member,
+                    category='welfare_payment',
+                    amount=amount_dec,
+                    description=data.get('description') or f"Welfare Payment — Month {payment.month_number} for {enrollment.member.full_name if enrollment.member else enrollment.non_member_name} (Ticket #{enrollment.ticket_number})",
+                    member=enrollment.member,
                     payment_mode=payment_mode,
                     recorded_by=request.user,
-                    loan_repayment=repayment,
+                    chit_payment=payment,
                 )
+
                 serializer = self.get_serializer(entry)
                 return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-        elif category in ['registration_fee', 'share_capital']:
-            if not member_id:
-                return Response({'error': True, 'message': 'Member is required for Registration Fee or Share Capital.'}, status=400)
+            elif category == 'loan_emi':
+                loan_id = data.get('loan')
+                instalment_no = data.get('month_number')
+                if not member_id or not loan_id or not instalment_no:
+                    return Response({'error': True, 'message': 'Member, Loan, and Installment Number are required.'}, status=400)
 
-            from apps.dues.models import Deposit
-            dep_type = 'membership_fee' if category == 'registration_fee' else 'share_capital'
+                from apps.loans.models import Loan, LoanRepayment
+                try:
+                    loan = Loan.objects.get(pk=loan_id, member_id=member_id)
+                except Loan.DoesNotExist:
+                    return Response({'error': True, 'message': 'Loan not found for this member.'}, status=400)
 
-            deposit = Deposit.objects.create(
-                member_id=member_id,
-                deposit_type=dep_type,
-                amount=amount,
-                deposit_date=date_str,
-                payment_mode=payment_mode,
-                receipt_no=data.get('receipt_no', ''),
-                status='active',
-                recorded_by=request.user,
-            )
+                loan.apply_loan_payment(
+                    start_instalment_no=int(instalment_no),
+                    amount=amount,
+                    paid_date=date_str,
+                    payment_mode=payment_mode,
+                    recorded_by=request.user
+                )
 
-            # Create the DailyEntry
-            serializer = self.get_serializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            serializer.save(recorded_by=request.user, deposit=deposit)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
+                repayment = LoanRepayment.objects.filter(loan=loan, instalment_no=int(instalment_no)).first()
+                entry = DailyEntry.objects.filter(loan_repayment=repayment).first() if repayment else None
+                if entry:
+                    if data.get('description'):
+                        entry.description = data.get('description')
+                        entry.save(update_fields=['description'])
+                    serializer = self.get_serializer(entry)
+                    return Response(serializer.data, status=status.HTTP_201_CREATED)
+                else:
+                    entry = DailyEntry.objects.create(
+                        date=date_str,
+                        entry_type='income',
+                        category='loan_emi',
+                        amount=amount,
+                        description=data.get('description') or f"Loan EMI Payment — Installment {instalment_no} for {loan.member.full_name} (Loan {loan.loan_no})",
+                        member=loan.member,
+                        payment_mode=payment_mode,
+                        recorded_by=request.user,
+                        loan_repayment=repayment,
+                    )
+                    serializer = self.get_serializer(entry)
+                    return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-        elif category == 'masavari':
-            # Record Masavari (monthly membership fee) payment
-            month_number = data.get('month_number')
-            if not member_id or not month_number:
-                return Response({'error': True, 'message': 'Member and Month Number (1-12) are required for Masavari.'}, status=400)
+            elif category in ['registration_fee', 'share_capital']:
+                if not member_id:
+                    return Response({'error': True, 'message': 'Member is required for Registration Fee or Share Capital.'}, status=400)
 
-            import datetime
-            from apps.dues.models import MasavariPayment
-            from apps.members.models import Member
-            from decimal import Decimal
+                from apps.dues.models import Deposit
+                dep_type = 'membership_fee' if category == 'registration_fee' else 'share_capital'
 
-            try:
-                member = Member.objects.get(pk=member_id)
-            except Member.DoesNotExist:
-                return Response({'error': True, 'message': 'Member not found.'}, status=400)
+                deposit = Deposit.objects.create(
+                    member_id=member_id,
+                    deposit_type=dep_type,
+                    amount=amount,
+                    deposit_date=date_str,
+                    payment_mode=payment_mode,
+                    receipt_no=data.get('receipt_no', ''),
+                    status='active',
+                    recorded_by=request.user,
+                )
 
-            paid_date = date_str
-            try:
-                parsed_date = datetime.date.fromisoformat(str(date_str))
-                year = parsed_date.year
-            except (ValueError, TypeError):
-                year = timezone.now().year
-                parsed_date = timezone.now().date()
+                # Create the DailyEntry
+                serializer = self.get_serializer(data=data)
+                serializer.is_valid(raise_exception=True)
+                serializer.save(recorded_by=request.user, deposit=deposit)
+                return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-            # Determine the member's masavari rate
-            masavari_rate = member.masavari_amount or Decimal('50.00')
-            if masavari_rate <= 0:
-                masavari_rate = Decimal('50.00')
+            elif category == 'masavari':
+                # Record Masavari (monthly membership fee) payment
+                month_number = data.get('month_number')
+                if not member_id or not month_number:
+                    return Response({'error': True, 'message': 'Member and Month Number (1-12) are required for Masavari.'}, status=400)
 
-            remaining_amount = Decimal(str(amount))
-            curr_month = int(month_number)
-            curr_year = year
-            paid_periods = []
+                import datetime
+                from apps.dues.models import MasavariPayment
+                from apps.members.models import Member
+                from decimal import Decimal
 
-            while remaining_amount > 0:
-                # Find if there is an existing payment for this month/year
-                existing_payment = MasavariPayment.objects.filter(
-                    member=member,
-                    year=curr_year,
-                    month=curr_month
-                ).first()
+                try:
+                    member = Member.objects.get(pk=member_id)
+                except Member.DoesNotExist:
+                    return Response({'error': True, 'message': 'Member not found.'}, status=400)
 
-                already_paid = existing_payment.amount if (existing_payment and existing_payment.status == 'paid') else Decimal('0.00')
-                needed = masavari_rate - already_paid
+                paid_date = date_str
+                try:
+                    parsed_date = datetime.date.fromisoformat(str(date_str))
+                    year = parsed_date.year
+                except (ValueError, TypeError):
+                    parsed_date = get_local_today()
+                    year = parsed_date.year
 
-                if needed <= 0:
-                    # Already fully paid, move to the next month
+                # Determine the member's masavari rate
+                masavari_rate = member.masavari_amount or Decimal('50.00')
+                if masavari_rate <= 0:
+                    masavari_rate = Decimal('50.00')
+
+                remaining_amount = Decimal(str(amount))
+                curr_month = int(month_number)
+                curr_year = year
+                paid_periods = []
+
+                while remaining_amount > 0:
+                    existing_payment = MasavariPayment.objects.filter(
+                        member=member,
+                        year=curr_year,
+                        month=curr_month
+                    ).first()
+
+                    already_paid = existing_payment.amount if (existing_payment and existing_payment.status == 'paid') else Decimal('0.00')
+                    needed = masavari_rate - already_paid
+
+                    if needed <= 0:
+                        curr_month += 1
+                        if curr_month > 12:
+                            curr_month = 1
+                            curr_year += 1
+                        continue
+
+                    pay_here = min(remaining_amount, needed)
+                    remaining_amount -= pay_here
+                    paid_periods.append(f"{curr_month}/{curr_year}")
+
+                    due_date_for_month = datetime.date(curr_year, curr_month, 5)
+
+                    payment, _ = MasavariPayment.objects.update_or_create(
+                        member=member,
+                        year=curr_year,
+                        month=curr_month,
+                        defaults={
+                            'amount': already_paid + pay_here,
+                            'due_date': due_date_for_month,
+                            'paid_date': parsed_date,
+                            'payment_mode': payment_mode,
+                            'status': 'paid' if (already_paid + pay_here >= masavari_rate) else 'pending',
+                            'receipt_no': data.get('receipt_no', ''),
+                            'recorded_by': request.user,
+                        }
+                    )
+
+                    try:
+                        from apps.activities.models import ActivityLog
+                        ActivityLog.objects.create(
+                            member=member,
+                            activity_type='masavari_paid',
+                            description=f"Masavari (Monthly Due) paid for {curr_month}/{curr_year} — ₹{pay_here}.",
+                            amount=pay_here,
+                            reference_id=str(payment.id),
+                            reference_type='MasavariPayment',
+                            performed_by=request.user,
+                        )
+                    except Exception:
+                        pass
+
                     curr_month += 1
                     if curr_month > 12:
                         curr_month = 1
                         curr_year += 1
-                    continue
 
-                pay_here = min(remaining_amount, needed)
-                remaining_amount -= pay_here
-                paid_periods.append(f"{curr_month}/{curr_year}")
+                if member.status == 'inactive':
+                    from apps.members.utils import check_and_reactivate_member
+                    check_and_reactivate_member(member)
 
-                due_date_for_month = datetime.date(curr_year, curr_month, 5)
-
-                payment, _ = MasavariPayment.objects.update_or_create(
+                entry = DailyEntry.objects.create(
+                    date=paid_date,
+                    entry_type='income',
+                    category='masavari',
+                    amount=amount,
+                    description=data.get('description') or f"Masavari (Monthly Due) paid for {', '.join(paid_periods)} — ₹{amount}.",
                     member=member,
-                    year=curr_year,
-                    month=curr_month,
-                    defaults={
-                        'amount': already_paid + pay_here,
-                        'due_date': due_date_for_month,
-                        'paid_date': parsed_date,
-                        'payment_mode': payment_mode,
-                        'status': 'paid' if (already_paid + pay_here >= masavari_rate) else 'pending',
-                        'receipt_no': data.get('receipt_no', ''),
-                        'recorded_by': request.user,
-                    }
+                    payment_mode=payment_mode,
+                    receipt_no=data.get('receipt_no', ''),
+                    recorded_by=request.user,
                 )
+                serializer = self.get_serializer(entry)
+                return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-                # Activity log
-                try:
-                    from apps.activities.models import ActivityLog
-                    ActivityLog.objects.create(
-                        member=member,
-                        activity_type='masavari_paid',
-                        description=f"Masavari (Monthly Due) paid for {curr_month}/{curr_year} — ₹{pay_here}.",
-                        amount=pay_here,
-                        reference_id=str(payment.id),
-                        reference_type='MasavariPayment',
-                        performed_by=request.user,
-                    )
-                except Exception:
-                    pass
-
-                # Go to next month
-                curr_month += 1
-                if curr_month > 12:
-                    curr_month = 1
-                    curr_year += 1
-
-            # Auto-reactivate if member status was inactive
-            if member.status == 'inactive':
-                from apps.members.utils import check_and_reactivate_member
-                check_and_reactivate_member(member)
-
-            # Create the single DailyEntry manually
-            entry = DailyEntry.objects.create(
-                date=paid_date,
-                entry_type='income',
-                category='masavari',
-                amount=amount,
-                description=f"Masavari (Monthly Due) paid for {', '.join(paid_periods)} — ₹{amount}.",
-                member=member,
-                payment_mode=payment_mode,
-                receipt_no=data.get('receipt_no', ''),
-                recorded_by=request.user,
-            )
-            serializer = self.get_serializer(entry)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-
-        else:
-            # Normal income/expense
-            serializer = self.get_serializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            serializer.save(recorded_by=request.user)
-            headers = self.get_success_headers(serializer.data)
-            return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+            else:
+                serializer = self.get_serializer(data=data)
+                serializer.is_valid(raise_exception=True)
+                serializer.save(recorded_by=request.user)
+                headers = self.get_success_headers(serializer.data)
+                return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
 
 class DailySummaryView(APIView):
@@ -315,6 +329,8 @@ class DailySummaryView(APIView):
         # Filter by date, month, year
         date_param = request.query_params.get('date')
         if date_param:
+            if isinstance(date_param, str) and 'T' in date_param:
+                date_param = date_param.split('T')[0]
             qs = qs.filter(date=date_param)
 
         month_param = request.query_params.get('month')
@@ -352,91 +368,153 @@ class DailySummaryView(APIView):
         })
 
 
-class DailyEntryDetailView(generics.RetrieveDestroyAPIView):
-    """GET/DELETE /api/collections/daily/{id}/ — retrieve or delete collection entry with cascading reversal."""
+class DailyEntryDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """GET/PUT/PATCH/DELETE /api/collections/daily/{id}/ — retrieve, edit or delete collection entry with cascading updates."""
     queryset = DailyEntry.objects.all()
     serializer_class = DailyEntrySerializer
     permission_classes = [IsAuthenticated, IsAdminOrStaffOrReadOnly]
 
+    def perform_update(self, serializer):
+        from django.db import transaction
+        from decimal import Decimal
+        with transaction.atomic():
+            instance = serializer.save()
+
+            # 1. Update linked Loan Repayment
+            if instance.loan_repayment:
+                repayment = instance.loan_repayment
+                loan = repayment.loan
+                repayment.amount_paid = instance.amount
+                repayment.paid_date = instance.date
+                repayment.payment_mode = instance.payment_mode
+                repayment.save(skip_update=True)
+
+                loan.repayments.all().update(
+                    amount_paid=Decimal('0.00'),
+                    principal_paid=Decimal('0.00'),
+                    interest_paid=Decimal('0.00'),
+                    is_paid=False,
+                    paid_date=None
+                )
+                remaining_entries = DailyEntry.objects.filter(
+                    loan_repayment__loan=loan,
+                    category='loan_emi'
+                ).order_by('date', 'created_at')
+
+                for entry in remaining_entries:
+                    first_unpaid = loan.repayments.filter(is_paid=False).order_by('instalment_no').first()
+                    start_no = first_unpaid.instalment_no if first_unpaid else 1
+                    loan.apply_loan_payment(
+                        start_instalment_no=start_no,
+                        amount=entry.amount,
+                        paid_date=entry.date,
+                        payment_mode=entry.payment_mode,
+                        receipt_no=getattr(entry, 'receipt_no', '') or '',
+                        recorded_by=entry.recorded_by
+                    )
+                    matched_repayment = loan.repayments.filter(instalment_no=start_no).first()
+                    if matched_repayment and entry.loan_repayment != matched_repayment:
+                        entry.loan_repayment = matched_repayment
+                        entry.save(update_fields=['loan_repayment'])
+
+                loan.update_outstanding_balance()
+
+            # 2. Update linked Chit Payment
+            if instance.chit_payment:
+                payment = instance.chit_payment
+                payment.amount_paid = instance.amount
+                payment.paid_date = instance.date
+                payment.payment_mode = instance.payment_mode
+                payment.is_paid = (payment.amount_paid >= payment.installment_amount)
+                payment.save()
+
+            # 3. Update linked Deposit
+            if instance.deposit:
+                deposit = instance.deposit
+                deposit.amount = instance.amount
+                deposit.deposit_date = instance.date
+                deposit.payment_mode = instance.payment_mode
+                deposit.save()
+
     def perform_destroy(self, instance):
+        from django.db import transaction
         from decimal import Decimal
         from apps.chits.models import ChitPayment
         from apps.loans.models import LoanRepayment
         from apps.dues.models import Deposit, MasavariPayment
         
-        # 1. Revert Chit (Welfare) Payment
-        if instance.chit_payment:
-            payment = instance.chit_payment
-            payment.amount_paid -= instance.amount
-            if payment.amount_paid <= 0:
-                payment.delete()
-            else:
-                payment.is_paid = False
-                payment.save()
-
-        # 2. Revert Loan Repayment / EMI
-        if instance.loan_repayment:
-            repayment = instance.loan_repayment
-            loan = repayment.loan
-
-            # Reset all repayments for this loan first
-            loan.repayments.all().update(
-                amount_paid=Decimal('0.00'),
-                principal_paid=Decimal('0.00'),
-                interest_paid=Decimal('0.00'),
-                is_paid=False,
-                paid_date=None
-            )
-
-            # Fetch all other active loan_emi daily entries for this loan (excluding the current one)
-            remaining_entries = DailyEntry.objects.filter(
-                loan_repayment__loan=loan,
-                category='loan_emi'
-            ).exclude(id=instance.id).order_by('date', 'created_at')
-
-            # Re-apply them sequentially in chronological order
-            for entry in remaining_entries:
-                first_unpaid = loan.repayments.filter(is_paid=False).order_by('instalment_no').first()
-                start_no = first_unpaid.instalment_no if first_unpaid else 1
-                loan.apply_loan_payment(
-                    start_instalment_no=start_no,
-                    amount=entry.amount,
-                    paid_date=entry.date,
-                    payment_mode=entry.payment_mode,
-                    receipt_no=entry.receipt_no or '',
-                    recorded_by=entry.recorded_by
-                )
-                # Link entry to the first repayment record it actually paid
-                matched_repayment = loan.repayments.filter(instalment_no=start_no).first()
-                if matched_repayment and entry.loan_repayment != matched_repayment:
-                    entry.loan_repayment = matched_repayment
-                    entry.save(update_fields=['loan_repayment'])
-
-            loan.update_outstanding_balance()
-
-        # 3. Revert Deposit (Registration Fee / Share Capital)
-        if instance.deposit:
-            instance.deposit.delete()
-
-        # 4. Revert Masavari Payment
-        if instance.category == 'masavari' and instance.member:
-            import re
-            # Extract all occurrences of month/year (digits/digits)
-            pairs = re.findall(r'(\d+)/(\d+)', instance.description)
-            if pairs:
-                for month_str, year_str in pairs:
-                    month = int(month_str)
-                    year = int(year_str)
-                    MasavariPayment.objects.filter(member=instance.member, year=year, month=month).delete()
-            else:
-                # Fallback to single match or date/amount match
-                match = re.search(r'paid for (\d+)/(\d+)', instance.description)
-                if match:
-                    month = int(match.group(1))
-                    year = int(match.group(2))
-                    MasavariPayment.objects.filter(member=instance.member, year=year, month=month).delete()
+        with transaction.atomic():
+            # 1. Revert Chit (Welfare) Payment
+            if instance.chit_payment:
+                payment = instance.chit_payment
+                payment.amount_paid -= instance.amount
+                if payment.amount_paid <= 0:
+                    payment.delete()
                 else:
-                    MasavariPayment.objects.filter(member=instance.member, paid_date=instance.date, amount=instance.amount).delete()
+                    payment.is_paid = False
+                    payment.save()
 
-        # 5. Delete the DailyEntry itself
-        instance.delete()
+            # 2. Revert Loan Repayment / EMI
+            if instance.loan_repayment:
+                repayment = instance.loan_repayment
+                loan = repayment.loan
+
+                # Reset all repayments for this loan first
+                loan.repayments.all().update(
+                    amount_paid=Decimal('0.00'),
+                    principal_paid=Decimal('0.00'),
+                    interest_paid=Decimal('0.00'),
+                    is_paid=False,
+                    paid_date=None
+                )
+
+                # Fetch all other active loan_emi daily entries for this loan (excluding the current one)
+                remaining_entries = DailyEntry.objects.filter(
+                    loan_repayment__loan=loan,
+                    category='loan_emi'
+                ).exclude(id=instance.id).order_by('date', 'created_at')
+
+                # Re-apply them sequentially in chronological order
+                for entry in remaining_entries:
+                    first_unpaid = loan.repayments.filter(is_paid=False).order_by('instalment_no').first()
+                    start_no = first_unpaid.instalment_no if first_unpaid else 1
+                    loan.apply_loan_payment(
+                        start_instalment_no=start_no,
+                        amount=entry.amount,
+                        paid_date=entry.date,
+                        payment_mode=entry.payment_mode,
+                        receipt_no=entry.receipt_no or '',
+                        recorded_by=entry.recorded_by
+                    )
+                    # Link entry to the first repayment record it actually paid
+                    matched_repayment = loan.repayments.filter(instalment_no=start_no).first()
+                    if matched_repayment and entry.loan_repayment != matched_repayment:
+                        entry.loan_repayment = matched_repayment
+                        entry.save(update_fields=['loan_repayment'])
+
+                loan.update_outstanding_balance()
+
+            # 3. Revert Deposit (Registration Fee / Share Capital)
+            if instance.deposit:
+                instance.deposit.delete()
+
+            # 4. Revert Masavari Payment
+            if instance.category == 'masavari' and instance.member:
+                import re
+                pairs = re.findall(r'(\d+)/(\d+)', instance.description or '')
+                if pairs:
+                    for month_str, year_str in pairs:
+                        month = int(month_str)
+                        year = int(year_str)
+                        MasavariPayment.objects.filter(member=instance.member, year=year, month=month).delete()
+                else:
+                    match = re.search(r'paid for (\d+)/(\d+)', instance.description or '')
+                    if match:
+                        month = int(match.group(1))
+                        year = int(match.group(2))
+                        MasavariPayment.objects.filter(member=instance.member, year=year, month=month).delete()
+                    else:
+                        MasavariPayment.objects.filter(member=instance.member, paid_date=instance.date, amount=instance.amount).delete()
+
+            # 5. Delete the DailyEntry itself
+            instance.delete()

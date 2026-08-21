@@ -24,8 +24,8 @@ const LoansPage = () => {
   const [loading, setLoading] = useState(false)
   const [selectedLoan, setSelectedLoan] = useState(null)
   const [overduePayments, setOverduePayments] = useState([])
-  const [activeTab, setActiveTab] = useState('loans')
-  const [filters, setFilters] = useState({ status: '', loan_type: '' })
+  const [activeTab, setActiveTab] = useState('active')
+  const [filters, setFilters] = useState({ status: 'active', loan_type: '' })
 
   const [loanModal, setLoanModal] = useState(false)
   const [closeLoanModal, setCloseLoanModal] = useState(false)
@@ -383,10 +383,51 @@ const LoansPage = () => {
 
       <Tabs
         activeKey={activeTab}
-        onChange={setActiveTab}
+        onChange={(key) => {
+          setActiveTab(key)
+          if (key === 'active') setFilters((f) => ({ ...f, status: 'active' }))
+          else if (key === 'closed') setFilters((f) => ({ ...f, status: 'closed' }))
+          else if (key === 'all') setFilters((f) => ({ ...f, status: '' }))
+        }}
         items={[
           {
-            key: 'loans',
+            key: 'active',
+            label: 'Active Loans',
+            children: (
+              <>
+                <Table
+                  columns={columns}
+                  dataSource={loans}
+                  loading={loading}
+                  rowKey="id"
+                  id="active-loans-table"
+                  pagination={{ pageSize: 20 }}
+                  scroll={{ x: true }}
+                />
+                {selectedLoan && renderLoanDetail()}
+              </>
+            ),
+          },
+          {
+            key: 'closed',
+            label: 'Closed Loans',
+            children: (
+              <>
+                <Table
+                  columns={columns}
+                  dataSource={loans}
+                  loading={loading}
+                  rowKey="id"
+                  id="closed-loans-table"
+                  pagination={{ pageSize: 20 }}
+                  scroll={{ x: true }}
+                />
+                {selectedLoan && renderLoanDetail()}
+              </>
+            ),
+          },
+          {
+            key: 'all',
             label: 'All Loans',
             children: (
               <>
@@ -395,7 +436,7 @@ const LoansPage = () => {
                   dataSource={loans}
                   loading={loading}
                   rowKey="id"
-                  id="loans-table"
+                  id="all-loans-table"
                   pagination={{ pageSize: 20 }}
                   scroll={{ x: true }}
                 />
