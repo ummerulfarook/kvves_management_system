@@ -832,6 +832,8 @@ const CollectionsPage = () => {
               </div>
             )
           }
+        ]}
+      />
       {/* Edit Entry Modal */}
       <Modal
         title="Edit Collection Entry"
