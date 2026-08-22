@@ -9,17 +9,28 @@ echo   KVVA Frontend Server
 echo   URL: http://localhost:5173
 echo =====================================================
 
-if not exist dist (
-    echo Building optimized production frontend for low-spec PC performance...
-    call npm run build
+:: Use backend Python environment
+if exist ..\backend\venv\Scripts\python.exe (
+    set PYTHON_EXE=..\backend\venv\Scripts\python.exe
+) else (
+    set PYTHON_EXE=python
 )
 
 if exist dist (
-    echo Starting optimized frontend server...
-    call npm run preview -- --host 0.0.0.0 --port 5173
+    echo Starting optimized production server...
+    %PYTHON_EXE% -m http.server 5173 --directory dist
 ) else (
-    echo Starting dev server fallback...
-    call npm run dev
+    if not exist node_modules (
+        echo Installing node_modules...
+        call npm install
+    )
+    echo Building production bundle...
+    call npm run build
+    if exist dist (
+        %PYTHON_EXE% -m http.server 5173 --directory dist
+    ) else (
+        call npm run dev
+    )
 )
 
 pause
