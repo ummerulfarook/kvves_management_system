@@ -18,7 +18,7 @@ if exist ..\backend\venv\Scripts\python.exe (
 
 if exist dist (
     echo Starting optimized production server...
-    %PYTHON_EXE% ..\backend\serve_frontend.py
+    %PYTHON_EXE% -m http.server 5173 --directory dist
 ) else (
     if not exist node_modules (
         echo Installing node_modules...

@@ -31,4 +31,4 @@ if __name__ == '__main__':
     print("  KVVA Management System — Production Server")
     print("  Listening on http://0.0.0.0:8000")
     print("="*60)
-    serve(application, host='0.0.0.0', port=8000, threads=8)
+    serve(application, host='0.0.0.0', port=8000, threads=4)
