@@ -16,20 +16,20 @@ echo NOTE: Please run this batch file as Administrator.
 echo.
 
 :: Setup paths
-set VBS_SCRIPT=%~dp0start_backend_hidden.vbs
+set VBS_SCRIPT=%~dp0launch_app_hidden.vbs
 
-echo Registering task "KVVES_Backend_Startup" using Windows Task Scheduler...
+echo Registering task "KVVES_App_Startup" using Windows Task Scheduler...
 echo Command target: %VBS_SCRIPT%
 echo.
 
 :: Create the scheduled task
-schtasks /create /tn "KVVES_Backend_Startup" /tr "wscript.exe \"%VBS_SCRIPT%\"" /sc onlogon /rl highest /f
+schtasks /create /tn "KVVES_App_Startup" /tr "wscript.exe \"%VBS_SCRIPT%\"" /sc onlogon /rl highest /f
 
 if %errorlevel% equ 0 (
     echo.
     echo ==========================================================
-    echo   SUCCESS: KVVES Backend is scheduled to start on logon!
-    echo   It will run silently in the background.
+    echo   SUCCESS: KVVES App is scheduled to start on boot/logon!
+    echo   Both backend and frontend will start and open browser.
     echo ==========================================================
 ) else (
     echo.
