@@ -39,9 +39,8 @@ frontend/.env
 .env.test.local
 .env.production.local
 
-# Frontend Node packages and builds
+# Frontend Node packages
 frontend/node_modules/
-frontend/dist/
 frontend/npm-debug.log*
 frontend/yarn-debug.log*
 frontend/yarn-error.log*

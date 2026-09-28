@@ -20,6 +20,7 @@ import * as membersApi from '../../api/members'
 import * as chitsApi from '../../api/chits'
 import * as loansApi from '../../api/loans'
 import * as duesApi from '../../api/dues'
+import * as collectionsApi from '../../api/collections'
 import {
   formatCurrency, formatDate, formatDateTime, maskAadhaar, formatPhone, getStatusColor,
 } from '../../utils/formatters'
@@ -63,6 +64,8 @@ const MemberDetailPage = () => {
   const [allowances, setAllowances] = useState([])
   const [activities, setActivities] = useState([])
   const [activityPage, setActivityPage] = useState(1)
+  const [memberEntries, setMemberEntries] = useState([])
+  const [memberEntriesLoading, setMemberEntriesLoading] = useState(false)
   const [dueFilter, setDueFilter] = useState('all')
   const [members, setMembers] = useState([])
   const [deletingMember, setDeletingMember] = useState(false)
@@ -143,6 +146,7 @@ const MemberDetailPage = () => {
     if (activeTab === 'masavari') loadMasavari()
     if (activeTab === 'allowances') loadAllowances()
     if (activeTab === 'activities') loadActivities()
+    if (activeTab === 'collections') loadMemberEntries()
   }, [activeTab, id])
   const loadChits = async () => {
     try {
@@ -188,6 +192,15 @@ const MemberDetailPage = () => {
       const res = await membersApi.getMemberActivities(id, { page: activityPage })
       setActivities(res.data.results || res.data)
     } catch (_) {}
+  }
+
+  const loadMemberEntries = async () => {
+    setMemberEntriesLoading(true)
+    try {
+      const res = await collectionsApi.getDailyEntries({ member: id, all: true })
+      setMemberEntries(res.data.results || res.data || [])
+    } catch (_) {}
+    setMemberEntriesLoading(false)
   }
 
   const loadWelfareGroups = async () => {
@@ -970,6 +983,43 @@ const MemberDetailPage = () => {
     </div>
   )
 
+  const collectionsTab = (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <Text strong style={{ fontSize: 14 }}>Daily Collections & Payment Receipts</Text>
+        <Button onClick={loadMemberEntries} loading={memberEntriesLoading} size="small">
+          Refresh
+        </Button>
+      </div>
+      <Table
+        dataSource={memberEntries}
+        rowKey="id"
+        size="small"
+        loading={memberEntriesLoading}
+        pagination={{ pageSize: 12 }}
+        columns={[
+          { title: 'Date', dataIndex: 'date', render: v => formatDate(v), width: 110 },
+          {
+            title: 'Category', dataIndex: 'category',
+            render: v => <Tag color="blue" style={{ textTransform: 'capitalize' }}>{v?.replace(/_/g, ' ')}</Tag>
+          },
+          { title: 'Description', dataIndex: 'description' },
+          {
+            title: 'Amount', dataIndex: 'amount',
+            render: (v, r) => (
+              <Text strong style={{ color: r.entry_type === 'income' ? '#16a34a' : '#dc2626' }}>
+                {r.entry_type === 'income' ? '+' : '-'} {formatCurrency(v)}
+              </Text>
+            )
+          },
+          { title: 'Mode', dataIndex: 'payment_mode', render: v => <Tag>{v}</Tag> },
+          { title: 'Receipt / Ref', dataIndex: 'receipt_no', render: v => v || '—' },
+          { title: 'Recorded By', dataIndex: 'recorded_by_name' }
+        ]}
+      />
+    </div>
+  )
+
   return (
     <div>
       {/* Member header */}
@@ -1145,6 +1195,7 @@ const MemberDetailPage = () => {
               ),
             },
             { key: 'allowances', label: 'Allowances', children: <div style={{ padding: '16px 0' }}>{allowancesTab}</div> },
+            { key: 'collections', label: `Collections & Receipts (${memberEntries.length})`, children: <div style={{ padding: '16px 0' }}>{collectionsTab}</div> },
             { key: 'activities', label: 'Activity Timeline', children: <div style={{ padding: '16px 0' }}>{activitiesTab}</div> },
           ]}
         />

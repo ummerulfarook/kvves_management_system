@@ -419,6 +419,7 @@ class ChitBulkPaymentView(APIView):
 
 
 class WelfareAuctionListView(generics.ListAPIView):
+    pagination_class = None
     serializer_class = WelfareAuctionSerializer
     permission_classes = [IsAuthenticated]
 
@@ -635,7 +636,7 @@ class WelfareActiveAuctionView(APIView):
                     due_date = group.start_date + relativedelta(months=old_month)
                     active_enrollments = group.enrollments.filter(status__in=['active', 'awarded'])
                     for enroll in active_enrollments:
-                        ChitPayment.objects.update_or_create(
+                        p, created = ChitPayment.objects.get_or_create(
                             enrollment=enroll,
                             month_number=old_month + 1,
                             defaults={
@@ -645,6 +646,11 @@ class WelfareActiveAuctionView(APIView):
                                 'is_paid': False,
                             }
                         )
+                        if not created:
+                            p.installment_amount = next_installment
+                            if p.amount_paid >= next_installment:
+                                p.is_paid = True
+                            p.save()
                 group.save()
 
         return Response({
@@ -677,11 +683,13 @@ class ChitClearDuesUpToMonthView(APIView):
         start = enrollment.chit_group.start_date
         for month in range(1, up_to_month + 1):
             due_date = start + relativedelta(months=month - 1)
+            auction = enrollment.chit_group.auctions.filter(month_number=month, is_completed=True).first()
+            inst_amt = auction.installment_amount if auction else enrollment.chit_group.monthly_instalment
             ChitPayment.objects.get_or_create(
                 enrollment=enrollment,
                 month_number=month,
                 defaults={
-                    'installment_amount': enrollment.chit_group.monthly_instalment,
+                    'installment_amount': inst_amt,
                     'amount_paid': Decimal('0.00'),
                     'due_date': due_date,
                     'is_paid': False,

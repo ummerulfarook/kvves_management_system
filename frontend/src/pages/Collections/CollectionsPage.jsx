@@ -73,12 +73,12 @@ const CollectionsPage = () => {
   const loadEntries = useCallback(async () => {
     setLoading(true)
     try {
-      let params = {}
+      let params = { page_size: 1000 }
       if (period === 'daily') {
         params.date = filterDate.format('YYYY-MM-DD')
       } else if (period === 'monthly') {
         params.month = filterMonth.format('YYYY-MM')
-      } else {
+      } else if (period === 'yearly') {
         params.year = filterMonth.format('YYYY')
       }
       const res = await collectionsApi.getDailyEntries(params)
@@ -176,10 +176,11 @@ const CollectionsPage = () => {
     } else if (cat === 'welfare_payment') {
       if (welfares.length === 1) {
         const w = welfares[0]
+        const m = w.next_pending_month || 1
         form.setFieldsValue({
           welfare_group: w.id,
-          month_number: w.next_pending_month || undefined,
-          amount: safeParseFloat(w.monthly_instalment),
+          month_number: m,
+          amount: getWelfareDueForMonth(w, m),
         })
       } else {
         form.setFieldsValue({ welfare_group: undefined, month_number: undefined, amount: undefined })
@@ -197,6 +198,32 @@ const CollectionsPage = () => {
       }
     } else {
       form.setFieldsValue({ welfare_group: undefined, loan: undefined, month_number: undefined, amount: undefined })
+    }
+  }
+
+  const getWelfareDueForMonth = (enrollment, monthNo) => {
+    if (!enrollment) return 0
+    if (enrollment.payments && enrollment.payments.length > 0) {
+      const p = enrollment.payments.find(pmt => Number(pmt.month_number) === Number(monthNo))
+      if (p) {
+        const remaining = safeParseFloat(p.installment_amount) - safeParseFloat(p.amount_paid)
+        return remaining > 0 ? remaining : safeParseFloat(p.installment_amount)
+      }
+    }
+    if (enrollment.next_pending_installment) {
+      return safeParseFloat(enrollment.next_pending_installment)
+    }
+    return safeParseFloat(enrollment.monthly_instalment)
+  }
+
+  const handleWelfareMonthChange = (monthNo) => {
+    if (!monthNo) return
+    const wId = form.getFieldValue('welfare_group')
+    const list = welfarePayerType === 'non_member' ? nonMemberEnrollments : memberWelfares
+    const selected = list.find(w => w.id === wId)
+    if (selected) {
+      const amt = getWelfareDueForMonth(selected, monthNo)
+      form.setFieldsValue({ amount: amt })
     }
   }
 
@@ -224,11 +251,12 @@ const CollectionsPage = () => {
   const handleWelfareEnrollmentSelect = (enrollmentId) => {
     const selected = nonMemberEnrollments.find(e => e.id === enrollmentId)
     if (selected) {
+      const m = selected.next_pending_month || 1
       form.setFieldsValue({
         welfare_group: selected.id,
         member: undefined,
-        month_number: selected.next_pending_month || 1,
-        amount: safeParseFloat(selected.monthly_instalment),
+        month_number: m,
+        amount: getWelfareDueForMonth(selected, m),
       })
     }
   }
@@ -278,9 +306,10 @@ const CollectionsPage = () => {
   const handleWelfareGroupSelect = (enrollmentId) => {
     const selected = memberWelfares.find(w => w.id === enrollmentId)
     if (selected) {
+      const m = selected.next_pending_month || 1
       form.setFieldsValue({
-        month_number: selected.next_pending_month || undefined,
-        amount: safeParseFloat(selected.monthly_instalment),
+        month_number: m,
+        amount: getWelfareDueForMonth(selected, m),
       })
     }
   }
@@ -369,6 +398,9 @@ const CollectionsPage = () => {
       message.success('Collection entry updated successfully!')
       setEditModal(false)
       setEditingEntry(null)
+      if (period === 'daily' && values.date) {
+        setFilterDate(values.date)
+      }
       loadEntries()
     } catch (err) {
       message.error(err?.response?.data?.message || 'Failed to update entry.')
@@ -696,7 +728,16 @@ const CollectionsPage = () => {
                               name="month_number"
                               rules={[{ required: true, message: 'Enter number' }]}
                             >
-                              <InputNumber min={1} style={{ width: '100%' }} placeholder="e.g. 1" />
+                              <InputNumber
+                                min={1}
+                                style={{ width: '100%' }}
+                                placeholder="e.g. 1"
+                                onChange={(val) => {
+                                  if (category === 'welfare_payment') {
+                                    handleWelfareMonthChange(val)
+                                  }
+                                }}
+                              />
                             </Form.Item>
                           </Col>
                         )}
@@ -759,6 +800,7 @@ const CollectionsPage = () => {
                       <Option value="daily">Daily</Option>
                       <Option value="monthly">Monthly</Option>
                       <Option value="yearly">Yearly</Option>
+                      <Option value="all">All Dates</Option>
                     </Select>
                     {period === 'daily' && (
                       <DatePicker value={filterDate} onChange={(d) => d && setFilterDate(d)} format="DD/MM/YYYY" allowClear={false} />

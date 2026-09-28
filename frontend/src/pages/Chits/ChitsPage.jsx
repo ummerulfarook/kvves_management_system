@@ -1146,15 +1146,22 @@ const WelfarePage = () => {
                   { title: 'Installment', dataIndex: 'installment_amount', key: 'installment_amount', render: v => formatCurrency(v) },
                   { title: 'Date Completed', dataIndex: 'completed_date', key: 'completed_date', render: v => formatDate(v) },
                   {
-                    title: 'Winner Slot', key: 'winner',
+                    title: 'Winner Slot(s)', key: 'winner',
                     render: (_, row) => {
-                      const winner = row.slots?.find(s => s.slot_type === 'winner')
-                      if (!winner) return '—'
-                      const name = winner.member_name || winner.non_member_name || 'Non-member'
+                      const winners = row.slots?.filter(s => s.slot_type === 'winner') || []
+                      if (!winners.length) return '—'
                       return (
-                        <div>
-                          <div style={{ fontWeight: 600, color: '#d97706' }}>{name}</div>
-                          <Tag color="gold" style={{ fontSize: 10 }}>Ticket {winner.enrollment_ticket_number || '—'}</Tag>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          {winners.map((winner, idx) => {
+                            const name = winner.member_name || winner.non_member_name || 'Non-member'
+                            return (
+                              <div key={idx}>
+                                <span style={{ fontWeight: 600, color: '#d97706' }}>{name}</span>
+                                <Tag color="gold" style={{ fontSize: 10, marginLeft: 4 }}>Ticket {winner.enrollment_ticket_number || '—'}</Tag>
+                                {winner.division_label && <Tag color="purple" style={{ fontSize: 10 }}>Div {winner.division_label}</Tag>}
+                              </div>
+                            )
+                          })}
                         </div>
                       )
                     }
@@ -1163,13 +1170,14 @@ const WelfarePage = () => {
                     title: 'Caller Slots', key: 'callers',
                     render: (_, row) => {
                       const callers = row.slots?.filter(s => s.slot_type === 'caller') || []
+                      if (!callers.length) return '—'
                       return (
                         <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12 }}>
                           {callers.map((c, idx) => {
                             const name = c.member_name || c.non_member_name || 'Non-member'
                             return (
                               <li key={idx}>
-                                {name} (Ticket {c.enrollment_ticket_number}) · Bid: <strong>{formatCurrency(c.bid_amount)}</strong>
+                                {name} (Ticket {c.enrollment_ticket_number}) {c.division_label ? `[Div ${c.division_label}]` : ''} · Bid: <strong>{formatCurrency(c.bid_amount)}</strong>
                               </li>
                             )
                           })}
@@ -1996,10 +2004,10 @@ const WelfarePage = () => {
                     style={{ width: '100%' }}
                   >
                     {enrollments
-                      .filter(e => e.status !== 'awarded' && !e.prize_won)
+                      .filter(e => (e.status !== 'awarded' && !e.prize_won) || e.id === row.enrollment)
                       .map(e => (
                         <Option key={e.id} value={e.id}>
-                          {e.member_name} ({e.ticket_number})
+                          {(e.member_name || e.non_member_name || 'Member')} (Ticket #{e.ticket_number})
                         </Option>
                       ))}
                   </Select>

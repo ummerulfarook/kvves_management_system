@@ -50,7 +50,22 @@ class DailyEntryListCreateView(generics.ListCreateAPIView):
         if category:
             qs = qs.filter(category=category)
 
+        member_param = self.request.query_params.get('member')
+        if member_param:
+            qs = qs.filter(member_id=member_param)
+
         return qs
+
+    def paginate_queryset(self, queryset):
+        if self.request.query_params.get('all') in ['true', '1'] or self.request.query_params.get('page_size') in ['all', '0']:
+            return None
+        page_size = self.request.query_params.get('page_size')
+        if page_size and self.paginator:
+            try:
+                self.paginator.page_size = int(page_size)
+            except (ValueError, TypeError):
+                pass
+        return super().paginate_queryset(queryset)
 
     def create(self, request, *args, **kwargs):
         from django.db import transaction
@@ -100,15 +115,21 @@ class DailyEntryListCreateView(generics.ListCreateAPIView):
                     return Response({'error': True, 'message': 'Selected welfare enrollment could not be found.'}, status=400)
 
                 from decimal import Decimal
+                auction = enrollment.chit_group.auctions.filter(month_number=int(month_number), is_completed=True).first()
+                inst_amt = auction.installment_amount if auction else enrollment.chit_group.monthly_instalment
+
                 payment, created = ChitPayment.objects.get_or_create(
                     enrollment=enrollment,
                     month_number=int(month_number),
                     defaults={
-                        'installment_amount': enrollment.chit_group.monthly_instalment,
+                        'installment_amount': inst_amt,
                         'amount_paid': Decimal('0.00'),
                         'due_date': date_str,
                     }
                 )
+                if not created and auction and payment.installment_amount != auction.installment_amount:
+                    payment.installment_amount = auction.installment_amount
+
                 amount_dec = Decimal(str(amount))
                 payment.amount_paid += amount_dec
                 payment.paid_date = date_str
@@ -132,6 +153,21 @@ class DailyEntryListCreateView(generics.ListCreateAPIView):
                     chit_payment=payment,
                 )
 
+                if enrollment.member:
+                    try:
+                        from apps.activities.models import ActivityLog
+                        ActivityLog.objects.create(
+                            member=enrollment.member,
+                            activity_type='chit_payment',
+                            description=entry.description,
+                            amount=amount_dec,
+                            reference_id=str(payment.id),
+                            reference_type='ChitPayment',
+                            performed_by=request.user,
+                        )
+                    except Exception:
+                        pass
+
                 serializer = self.get_serializer(entry)
                 return Response(serializer.data, status=status.HTTP_201_CREATED)
 
@@ -142,6 +178,7 @@ class DailyEntryListCreateView(generics.ListCreateAPIView):
                     return Response({'error': True, 'message': 'Member, Loan, and Installment Number are required.'}, status=400)
 
                 from apps.loans.models import Loan, LoanRepayment
+                from decimal import Decimal
                 try:
                     loan = Loan.objects.get(pk=loan_id, member_id=member_id)
                 except Loan.DoesNotExist:
@@ -161,8 +198,6 @@ class DailyEntryListCreateView(generics.ListCreateAPIView):
                     if data.get('description'):
                         entry.description = data.get('description')
                         entry.save(update_fields=['description'])
-                    serializer = self.get_serializer(entry)
-                    return Response(serializer.data, status=status.HTTP_201_CREATED)
                 else:
                     entry = DailyEntry.objects.create(
                         date=date_str,
@@ -175,14 +210,30 @@ class DailyEntryListCreateView(generics.ListCreateAPIView):
                         recorded_by=request.user,
                         loan_repayment=repayment,
                     )
-                    serializer = self.get_serializer(entry)
-                    return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+                try:
+                    from apps.activities.models import ActivityLog
+                    ActivityLog.objects.create(
+                        member=loan.member,
+                        activity_type='loan_repayment',
+                        description=entry.description,
+                        amount=Decimal(str(amount)),
+                        reference_id=str(repayment.id) if repayment else str(loan.id),
+                        reference_type='LoanRepayment' if repayment else 'Loan',
+                        performed_by=request.user,
+                    )
+                except Exception:
+                    pass
+
+                serializer = self.get_serializer(entry)
+                return Response(serializer.data, status=status.HTTP_201_CREATED)
 
             elif category in ['registration_fee', 'share_capital']:
                 if not member_id:
                     return Response({'error': True, 'message': 'Member is required for Registration Fee or Share Capital.'}, status=400)
 
                 from apps.dues.models import Deposit
+                from decimal import Decimal
                 dep_type = 'membership_fee' if category == 'registration_fee' else 'share_capital'
 
                 deposit = Deposit.objects.create(
@@ -200,6 +251,24 @@ class DailyEntryListCreateView(generics.ListCreateAPIView):
                 serializer = self.get_serializer(data=data)
                 serializer.is_valid(raise_exception=True)
                 serializer.save(recorded_by=request.user, deposit=deposit)
+
+                try:
+                    from apps.activities.models import ActivityLog
+                    from apps.members.models import Member
+                    mem = Member.objects.filter(pk=member_id).first()
+                    if mem:
+                        ActivityLog.objects.create(
+                            member=mem,
+                            activity_type='deposit_made',
+                            description=f"{'Registration Fee' if category == 'registration_fee' else 'Share Capital'} of ₹{amount} received.",
+                            amount=Decimal(str(amount)),
+                            reference_id=str(deposit.id),
+                            reference_type='Deposit',
+                            performed_by=request.user,
+                        )
+                except Exception:
+                    pass
+
                 return Response(serializer.data, status=status.HTTP_201_CREATED)
 
             elif category == 'masavari':
@@ -436,6 +505,38 @@ class DailyEntryDetailView(generics.RetrieveUpdateDestroyAPIView):
                 deposit.payment_mode = instance.payment_mode
                 deposit.save()
 
+            # 4. Update linked Masavari Payment
+            if instance.category == 'masavari' and instance.member:
+                from apps.dues.models import MasavariPayment
+                MasavariPayment.objects.filter(member=instance.member, paid_date=instance.date).update(
+                    amount=instance.amount,
+                    payment_mode=instance.payment_mode
+                )
+
+            # 5. Sync ActivityLog
+            try:
+                from apps.activities.models import ActivityLog
+                if instance.chit_payment:
+                    ActivityLog.objects.filter(reference_id=str(instance.chit_payment.id), reference_type='ChitPayment').update(
+                        amount=instance.amount,
+                        description=instance.description or f"Welfare Payment updated (Ticket #{instance.chit_payment.enrollment.ticket_number})"
+                    )
+                elif instance.loan_repayment:
+                    ActivityLog.objects.filter(reference_id=str(instance.loan_repayment.id), reference_type='LoanRepayment').update(
+                        amount=instance.amount,
+                        description=instance.description
+                    )
+                elif instance.deposit:
+                    ActivityLog.objects.filter(reference_id=str(instance.deposit.id), reference_type='Deposit').update(
+                        amount=instance.amount
+                    )
+                elif instance.category == 'masavari' and instance.member:
+                    ActivityLog.objects.filter(member=instance.member, activity_type='masavari_paid', timestamp__date=instance.date).update(
+                        amount=instance.amount
+                    )
+            except Exception:
+                pass
+
     def perform_destroy(self, instance):
         from django.db import transaction
         from decimal import Decimal
@@ -444,6 +545,20 @@ class DailyEntryDetailView(generics.RetrieveUpdateDestroyAPIView):
         from apps.dues.models import Deposit, MasavariPayment
         
         with transaction.atomic():
+            # Clean up ActivityLogs
+            try:
+                from apps.activities.models import ActivityLog
+                if instance.chit_payment:
+                    ActivityLog.objects.filter(reference_id=str(instance.chit_payment.id), reference_type='ChitPayment').delete()
+                if instance.loan_repayment:
+                    ActivityLog.objects.filter(reference_id=str(instance.loan_repayment.id), reference_type='LoanRepayment').delete()
+                if instance.deposit:
+                    ActivityLog.objects.filter(reference_id=str(instance.deposit.id), reference_type='Deposit').delete()
+                if instance.category == 'masavari' and instance.member:
+                    ActivityLog.objects.filter(member=instance.member, activity_type='masavari_paid', timestamp__date=instance.date).delete()
+            except Exception:
+                pass
+
             # 1. Revert Chit (Welfare) Payment
             if instance.chit_payment:
                 payment = instance.chit_payment

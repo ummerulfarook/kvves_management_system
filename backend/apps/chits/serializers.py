@@ -96,6 +96,7 @@ class ChitEnrollmentSerializer(serializers.ModelSerializer):
     guarantor1_member_no = serializers.SerializerMethodField()
     guarantor2_member_no = serializers.SerializerMethodField()
     next_pending_month = serializers.SerializerMethodField()
+    next_pending_installment = serializers.SerializerMethodField()
 
     class Meta:
         model = ChitEnrollment
@@ -148,6 +149,12 @@ class ChitEnrollmentSerializer(serializers.ModelSerializer):
             return pending.month_number
         return None
 
+    def get_next_pending_installment(self, obj):
+        pending = obj.payments.filter(is_paid=False).order_by('month_number').first()
+        if pending:
+            return float(pending.installment_amount - pending.amount_paid)
+        return float(obj.chit_group.monthly_instalment)
+
     def get_payments(self, obj):
         from dateutil.relativedelta import relativedelta
         from decimal import Decimal
@@ -161,11 +168,13 @@ class ChitEnrollmentSerializer(serializers.ModelSerializer):
         if missing_months:
             for month in missing_months:
                 due_date = start + relativedelta(months=month - 1)
+                auction = group.auctions.filter(month_number=month, is_completed=True).first()
+                inst_amt = auction.installment_amount if auction else group.monthly_instalment
                 ChitPayment.objects.get_or_create(
                     enrollment=obj,
                     month_number=month,
                     defaults={
-                        'installment_amount': group.monthly_instalment,
+                        'installment_amount': inst_amt,
                         'amount_paid': Decimal('0.00'),
                         'due_date': due_date,
                         'is_paid': False,
