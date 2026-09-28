@@ -4,6 +4,7 @@ Reports app views — aggregated dashboard and report data.
 
 from decimal import Decimal
 from django.utils import timezone
+from django.db import models
 from django.db.models import Sum, Count, Q
 from django.db.models.functions import TruncMonth
 from rest_framework.views import APIView
