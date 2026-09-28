@@ -15,14 +15,15 @@ echo Starting Frontend Server...
 start "KVVA Frontend Server" cmd /k "call %~dp0start_frontend.bat"
 
 echo.
-echo ==========================================================
-echo   Servers are starting in separate windows.
-echo   - Backend API:  http://localhost:8000
-echo   - Frontend App: http://localhost:5173
-echo.
-echo   Please keep this window and the server windows open
-echo   while using the application.
-echo ==========================================================
-echo.
+echo Waiting for servers to initialize...
+timeout /t 3 /nobreak >nul
+start http://localhost:5173
 
-timeout /t 8
+echo.
+echo ==========================================================
+echo   Application started successfully!
+echo   Web App URL: http://localhost:5173
+echo.
+echo   Please keep the server windows open while using the app.
+echo ==========================================================
+timeout /t 5

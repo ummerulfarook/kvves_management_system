@@ -6,21 +6,21 @@ Run: python serve.py
 import os
 from waitress import serve
 
-# Read .env file manually to detect DEBUG mode and set default settings module
+# Read .env file manually to detect database mode and set default settings module
 try:
     env_path = os.path.join(os.path.dirname(__file__), '.env')
     if os.path.exists(env_path):
         with open(env_path, 'r') as f:
             env_content = f.read()
-        if 'DEBUG=True' in env_content.replace(' ', ''):
-            os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings.development')
-            print("Detected DEBUG=True in .env. Using development settings.")
-        else:
+        cleaned_env = env_content.replace(' ', '').lower()
+        if 'postgres' in cleaned_env:
             os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings.production')
+        else:
+            os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings.development')
     else:
-        os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings.production')
+        os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings.development')
 except Exception:
-    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings.production')
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings.development')
 
 from django.core.wsgi import get_wsgi_application
 

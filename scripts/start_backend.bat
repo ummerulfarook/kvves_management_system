@@ -10,21 +10,21 @@ echo =====================================================
 echo   KVVA Management System — Backend Server
 echo =====================================================
 
-:: Check if .env exists
+:: Check if .env exists, if not create a default one for SQLite
 if not exist .env (
-    echo ERROR: .env file not found!
-    echo Please copy .env.example to .env and configure it.
-    pause
-    exit /b 1
+    echo Creating default .env configuration for SQLite...
+    echo DEBUG=True > .env
+    echo SECRET_KEY=kvva-prod-key-2026 >> .env
+    echo ALLOWED_HOSTS=* >> .env
 )
 
-findstr /I "DEBUG=True" .env >nul
+findstr /I "postgres" .env >nul
 if %errorlevel% equ 0 (
-    set DJANGO_SETTINGS_MODULE=core.settings.development
-    echo Running in DEVELOPMENT mode with SQLite...
-) else (
     set DJANGO_SETTINGS_MODULE=core.settings.production
     echo Running in PRODUCTION mode with PostgreSQL...
+) else (
+    set DJANGO_SETTINGS_MODULE=core.settings.development
+    echo Running in SQLite mode...
 )
 
 :: Check if virtual environment exists and use it
