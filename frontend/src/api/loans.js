@@ -12,3 +12,5 @@ export const recordRepayment = (loanId, data) => api.post(`/loans/${loanId}/repa
 export const updateRepayment = (rid, data) => api.put(`/repayments/${rid}/`, data)
 
 export const getOverdueLoans = () => api.get('/loans/overdue/')
+export const deleteLoan = (id) => api.delete(`/loans/${id}/`)
+export const bulkRepayment = (id, data) => api.post(`/loans/${id}/bulk-repayment/`, data)

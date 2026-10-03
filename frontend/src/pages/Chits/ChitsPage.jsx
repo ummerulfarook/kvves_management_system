@@ -114,7 +114,7 @@ const WelfarePage = () => {
     setLoadingPayments(true)
     try {
       const res = await chitsApi.getPayments(enrollment.id)
-      setEnrollmentPayments(res.data.results || res.data)
+      setEnrollmentPayments(Array.isArray(res.data) ? res.data : (res.data.results || []))
     } catch (err) {
       message.error('Failed to load installment payments.')
     } finally {

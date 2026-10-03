@@ -59,6 +59,7 @@ class DailyEntry(models.Model):
         related_name='daily_entries'
     )
     payment_mode = models.CharField(max_length=20, choices=PAYMENT_MODES, default='cash')
+    receipt_no = models.CharField(max_length=50, blank=True, default='')
     recorded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

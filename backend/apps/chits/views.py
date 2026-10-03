@@ -64,8 +64,13 @@ class ChitEnrollmentListView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+        pk = self.kwargs['group_pk']
+        from django.db.models import Q
+        filter_q = Q(chit_group__group_no=str(pk))
+        if str(pk).isdigit():
+            filter_q |= Q(chit_group_id=int(pk))
         return ChitEnrollment.objects.filter(
-            chit_group_id=self.kwargs['group_pk']
+            filter_q
         ).select_related('member', 'chit_group').prefetch_related('payments')
 
 
@@ -274,6 +279,7 @@ class ChitEnrollmentDetailView(generics.RetrieveUpdateDestroyAPIView):
 class ChitPaymentListCreateView(generics.ListCreateAPIView):
     """GET/POST /api/enrollments/{eid}/payments/"""
 
+    pagination_class = None
     serializer_class = ChitPaymentSerializer
     permission_classes = [IsAuthenticated, IsAdminOrStaffOrReadOnly]
 
@@ -444,10 +450,8 @@ class WelfareActiveAuctionView(APIView):
         except (ValueError, TypeError):
             target_month = group.current_month
 
-        # Count remaining members who haven't won yet
-        remaining_members = group.enrollments.filter(prize_won=False).count()
         eff_divs = group.effective_divisions
-        slots_to_generate = min(eff_divs, max(1, remaining_members))
+        labels = group.effective_division_labels
 
         # Get or create active auction for specified month
         auction, created = WelfareAuction.objects.get_or_create(
@@ -458,27 +462,35 @@ class WelfareActiveAuctionView(APIView):
             }
         )
 
-        if created or auction.slots.count() == 0:
-            # Re-generate slots to match slots_to_generate
-            auction.slots.all().delete()
-            labels = group.effective_division_labels
-            from decimal import Decimal
-            for i in range(slots_to_generate):
-                label = labels[i] if i < len(labels) else chr(ord('A') + i)
-                default_type = 'winner' if (remaining_members <= 3 or i == 0) else 'caller'
-                
-                WelfareAuctionSlot.objects.create(
-                    auction=auction,
-                    slot_type=default_type,
-                    division_label=label,
-                    bid_amount=group.chit_value,
-                    commission_amount=group.commission_rate,
-                    service_charge=Decimal('0.00'),
-                    surcharge_amount=group.commission_rate,
-                    discount_amount=Decimal('0.00'),
-                    net_received=group.chit_value - group.commission_rate,
-                    profit_earned=group.commission_rate
-                )
+        if not auction.is_completed:
+            current_slots = list(auction.slots.all().order_by('id'))
+            needs_regen = (
+                created or 
+                len(current_slots) != eff_divs or
+                not any(s.slot_type == 'winner' for s in current_slots) or
+                (eff_divs > 1 and not any(s.slot_type == 'caller' for s in current_slots))
+            )
+            if needs_regen:
+                has_submitted_enrollments = any(s.enrollment_id for s in current_slots)
+                if not has_submitted_enrollments or len(current_slots) != eff_divs:
+                    auction.slots.all().delete()
+                    from decimal import Decimal
+                    for i in range(eff_divs):
+                        label = labels[i] if i < len(labels) else chr(ord('A') + i)
+                        default_type = 'winner' if i == 0 else 'caller'
+                        
+                        WelfareAuctionSlot.objects.create(
+                            auction=auction,
+                            slot_type=default_type,
+                            division_label=label,
+                            bid_amount=group.chit_value,
+                            commission_amount=group.commission_rate,
+                            service_charge=Decimal('0.00'),
+                            surcharge_amount=group.commission_rate,
+                            discount_amount=Decimal('0.00'),
+                            net_received=group.chit_value - group.commission_rate,
+                            profit_earned=group.commission_rate
+                        )
 
         serializer = WelfareAuctionSerializer(auction)
         return Response(serializer.data)
@@ -507,9 +519,8 @@ class WelfareActiveAuctionView(APIView):
             )
 
         slots_data = request.data.get('slots', [])
-        remaining_members = group.enrollments.filter(prize_won=False).count()
         eff_divs = group.effective_divisions
-        expected_slots = min(eff_divs, max(1, remaining_members))
+        expected_slots = eff_divs
 
         if len(slots_data) != expected_slots:
             return Response({
@@ -557,12 +568,11 @@ class WelfareActiveAuctionView(APIView):
                 if bid_val <= float(group.commission_rate):
                     return Response({'error': True, 'message': f"Caller bid amount must be greater than committee commission (₹{group.commission_rate})."}, status=400)
 
-        if winner_count < 1:
-            return Response({'error': True, 'message': "At least 1 slot must be designated as the Winner."}, status=400)
+        if winner_count != 1:
+            return Response({'error': True, 'message': "Exactly 1 slot must be designated as the Winner."}, status=400)
 
-        if remaining_members > 3:
-            if winner_count != 1:
-                return Response({'error': True, 'message': "Exactly 1 slot must be designated as the Winner."}, status=400)
+        if caller_count != (eff_divs - 1):
+            return Response({'error': True, 'message': f"Exactly {eff_divs - 1} slot(s) must be designated as Callers."}, status=400)
 
         # Everything is valid! Process save & recalculation
         from decimal import Decimal

@@ -52,12 +52,90 @@ class LoanListCreateView(generics.ListCreateAPIView):
             pass
 
 
-class LoanDetailView(generics.RetrieveUpdateAPIView):
-    """GET/PUT /api/loans/{id}/"""
+class LoanDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """GET/PUT/DELETE /api/loans/{id}/"""
 
-    queryset = Loan.objects.select_related('member', 'guarantor', 'approved_by').prefetch_related('repayments')
+    queryset = Loan.objects.select_related('member', 'guarantor', 'guarantor2', 'approved_by').prefetch_related('repayments')
     serializer_class = LoanSerializer
     permission_classes = [IsAuthenticated, IsAdminOrStaffOrReadOnly]
+
+    def destroy(self, request, *args, **kwargs):
+        if request.user.role != 'admin':
+            return Response(
+                {'error': True, 'message': 'Only administrators can delete a loan.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        loan = self.get_object()
+        loan_id = loan.id
+        loan_no = loan.loan_no
+        member = loan.member
+        loan_amount = loan.loan_amount
+
+        from decimal import Decimal
+        from django.db import transaction
+        from django.db.models import Sum, Q, Value
+        from django.db.models.functions import Concat
+        from apps.collections.models import DailyEntry
+        from apps.activities.models import ActivityLog
+
+        with transaction.atomic():
+            total_repaid = loan.repayments.filter(is_paid=True).aggregate(t=Sum('amount_paid'))['t'] or Decimal('0.00')
+
+            # 1. Update DailyEntry records connected to this loan
+            repayment_ids = list(loan.repayments.values_list('id', flat=True))
+            if repayment_ids:
+                DailyEntry.objects.filter(loan_repayment_id__in=repayment_ids).update(
+                    loan_repayment=None,
+                    description=Concat('description', Value(f' [linked loan {loan_no} deleted]'))
+                )
+
+            DailyEntry.objects.filter(
+                Q(category__in=['loan_emi', 'loan_disbursement', 'loan_charge']) &
+                Q(description__icontains=loan_no)
+            ).exclude(
+                description__icontains=f'[linked loan {loan_no} deleted]'
+            ).update(
+                description=Concat('description', Value(f' [linked loan {loan_no} deleted]'))
+            )
+
+            # 2. Delete all repayment schedule records
+            loan.repayments.all().delete()
+
+            # 3. Clear guarantor links
+            loan.guarantor = None
+            loan.guarantor2 = None
+            loan.save(update_fields=['guarantor', 'guarantor2'])
+
+            # 4. Transaction history audit trail:
+            ActivityLog.objects.filter(
+                reference_id=str(loan_id),
+                reference_type__in=['Loan', 'LoanRepayment']
+            ).update(
+                description=Concat('description', Value(f' [LOAN {loan_no} DELETED]'))
+            )
+
+            ActivityLog.objects.create(
+                member=member,
+                activity_type='other',
+                description=f"Loan {loan_no} (Amount: ₹{loan_amount}, Total Repaid: ₹{total_repaid}) permanently deleted by Admin {request.user.get_full_name() or request.user.username}.",
+                amount=loan_amount,
+                reference_id=str(loan_id),
+                reference_type='LoanDeleted',
+                performed_by=request.user,
+            )
+
+            # 5. Delete the loan
+            loan.delete()
+
+        return Response(
+            {
+                'success': True,
+                'message': f'Loan {loan_no} has been permanently deleted.',
+                'total_repaid': str(total_repaid),
+            },
+            status=status.HTTP_200_OK
+        )
 
 
 class LoanApproveView(APIView):
@@ -370,3 +448,120 @@ class LoanOverdueView(generics.ListAPIView):
             is_paid=False,
             due_date__lt=today,
         ).select_related('loan__member').order_by('due_date')
+
+
+class LoanBulkRepaymentView(APIView):
+    """POST /api/loans/{id}/bulk-repayment/ — record bulk EMI repayments for multiple months."""
+
+    permission_classes = [IsAuthenticated, IsAdminOrStaffOrReadOnly]
+
+    def post(self, request, loan_pk):
+        from decimal import Decimal
+        from django.db import transaction
+        from apps.collections.models import DailyEntry
+        from apps.activities.models import ActivityLog
+        from apps.accounts.utils import get_local_today
+
+        try:
+            loan = Loan.objects.get(pk=loan_pk)
+        except Loan.DoesNotExist:
+            return Response({'error': True, 'message': 'Loan not found.'}, status=404)
+
+        if loan.status != 'active':
+            return Response({'error': True, 'message': f'Cannot record repayment on {loan.status} loan.'}, status=400)
+
+        instalment_ids = request.data.get('instalment_ids') or []
+        instalment_numbers = request.data.get('instalment_numbers') or []
+        total_amount_raw = request.data.get('total_amount')
+        paid_date = request.data.get('paid_date') or get_local_today()
+        payment_mode = request.data.get('payment_mode', 'cash')
+        receipt_no = request.data.get('receipt_no', '')
+        remarks = request.data.get('remarks', '')
+
+        if not instalment_ids and not instalment_numbers:
+            return Response({'error': True, 'message': 'Please select at least one installment to pay.'}, status=400)
+
+        if total_amount_raw is None:
+            return Response({'error': True, 'message': 'Total amount is required.'}, status=400)
+
+        try:
+            total_amount = Decimal(str(total_amount_raw))
+        except Exception:
+            return Response({'error': True, 'message': 'Invalid total amount.'}, status=400)
+
+        # Fetch repayments
+        if instalment_ids:
+            repayments = list(loan.repayments.filter(id__in=instalment_ids).order_by('instalment_no'))
+        else:
+            repayments = list(loan.repayments.filter(instalment_no__in=instalment_numbers).order_by('instalment_no'))
+
+        if not repayments:
+            return Response({'error': True, 'message': 'No matching installments found.'}, status=400)
+
+        # Check if any already paid
+        already_paid = [r.instalment_no for r in repayments if r.is_paid]
+        if already_paid:
+            return Response({
+                'error': True,
+                'message': f"Installment(s) {', '.join(str(i) for i in already_paid)} are already paid."
+            }, status=400)
+
+        count = len(repayments)
+        expected_total = count * loan.emi_amount
+
+        # Strict validation: total amount must equal count * EMI amount
+        if total_amount != expected_total:
+            return Response({
+                'error': True,
+                'message': f"Total amount (₹{total_amount}) does not match {count} months × EMI ₹{loan.emi_amount} (Expected total: ₹{expected_total})."
+            }, status=400)
+
+        with transaction.atomic():
+            instalment_labels = []
+            for r in repayments:
+                r.amount_paid = loan.emi_amount
+                r.principal_paid = loan.emi_amount
+                r.interest_paid = Decimal('0.00')
+                r.is_paid = True
+                r.paid_date = paid_date
+                r.payment_mode = payment_mode
+                r.receipt_no = receipt_no
+                r.recorded_by = request.user
+                r.save(skip_update=True)
+                instalment_labels.append(str(r.instalment_no))
+
+                # Create individual DailyEntry per month with exact monthly EMI
+                DailyEntry.objects.create(
+                    date=paid_date,
+                    entry_type='income',
+                    category='loan_emi',
+                    amount=loan.emi_amount,
+                    description=f"Loan EMI Payment — Installment {r.instalment_no} for {loan.member.full_name} (Loan {loan.loan_no}){f' — {remarks}' if remarks else ''}",
+                    member=loan.member,
+                    payment_mode=payment_mode,
+                    receipt_no=receipt_no,
+                    recorded_by=request.user,
+                    loan_repayment=r,
+                )
+
+            # Update loan outstanding balance
+            loan.update_outstanding_balance()
+
+            # Record ActivityLog audit trail
+            inst_str = ', '.join(instalment_labels)
+            ActivityLog.objects.create(
+                member=loan.member,
+                activity_type='loan_repayment',
+                description=f"Loan {loan.loan_no} — Bulk EMI payment for {count} installment(s) (#{inst_str}) of ₹{loan.emi_amount}/month (Total ₹{total_amount}) recorded.",
+                amount=total_amount,
+                reference_id=str(loan.id),
+                reference_type='Loan',
+                performed_by=request.user,
+            )
+
+        serializer = LoanSerializer(loan)
+        return Response({
+            'success': True,
+            'message': f"Bulk EMI payment of ₹{total_amount} recorded successfully across {count} installment(s).",
+            'loan': serializer.data
+        }, status=status.HTTP_200_OK)

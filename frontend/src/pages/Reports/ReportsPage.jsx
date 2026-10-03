@@ -14,6 +14,8 @@ import {
 } from 'recharts'
 import dayjs from 'dayjs'
 import * as reportsApi from '../../api/reports'
+import * as membersApi from '../../api/members'
+import * as chitsApi from '../../api/chits'
 import { exportOverdue, exportPeriodReport, downloadBlob, exportWelfareReport, exportLoanReport } from '../../api/imports'
 import { formatCurrency, formatDate } from '../../utils/formatters'
 import ExportButton from '../../components/ExportButton'
@@ -745,6 +747,8 @@ const WelfareReport = ({ chitsSummary }) => {
   const [results, setResults] = useState([])
   const [loading, setLoading] = useState(false)
   const [downloading, setDownloading] = useState(false)
+  const [enrolledMembers, setEnrolledMembers] = useState([])
+  const [enrollmentsLoading, setEnrollmentsLoading] = useState(false)
 
   const loadMembers = async (search = '') => {
     setMembersLoading(true)
@@ -758,6 +762,20 @@ const WelfareReport = ({ chitsSummary }) => {
   useEffect(() => {
     loadMembers()
   }, [])
+
+  useEffect(() => {
+    if (selectedGroup) {
+      setEnrollmentsLoading(true)
+      chitsApi.getEnrollments(selectedGroup)
+        .then(res => {
+          setEnrolledMembers(Array.isArray(res.data) ? res.data : (res.data.results || []))
+        })
+        .catch(() => setEnrolledMembers([]))
+        .finally(() => setEnrollmentsLoading(false))
+    } else {
+      setEnrolledMembers([])
+    }
+  }, [selectedGroup])
 
   const fetchReport = async () => {
     setLoading(true)
@@ -881,6 +899,8 @@ const WelfareReport = ({ chitsSummary }) => {
     printWindow.document.close()
   }
 
+  const selectedGroupObj = (chitsSummary?.by_group || []).find(g => g.group_no === selectedGroup || g.id === selectedGroup)
+
   return (
     <div>
       <Card style={{ marginBottom: 16, background: '#fafafa' }} bodyStyle={{ padding: 16 }}>
@@ -904,6 +924,7 @@ const WelfareReport = ({ chitsSummary }) => {
               onChange={setSelectedMember}
               filterOption={false}
               onSearch={loadMembers}
+              loading={membersLoading}
               style={{ width: '100%' }}
             >
               {members.map(m => (
@@ -958,28 +979,122 @@ const WelfareReport = ({ chitsSummary }) => {
         </Row>
       </Card>
 
-      <Table
-        dataSource={results}
-        rowKey="id"
-        size="small"
-        pagination={{ pageSize: 20 }}
-        loading={loading}
-        columns={[
-          { title: 'Member', key: 'member', render: (_, r) => <span>{r.member_name} ({r.member_no})</span> },
-          { title: 'Scheme', dataIndex: 'group_name' },
-          { title: 'Month', dataIndex: 'month_number', render: v => `Month ${v}` },
-          { title: 'Required', dataIndex: 'installment_amount', render: v => formatCurrency(v) },
-          { title: 'Paid', dataIndex: 'amount_paid', render: v => formatCurrency(v) },
-          { title: 'Due Date', dataIndex: 'due_date', render: v => formatDate(v) },
-          { title: 'Paid Date', dataIndex: 'paid_date', render: v => v ? formatDate(v) : '—' },
-          {
-            title: 'Status', key: 'status',
-            render: (_, r) => r.is_paid 
-              ? <Tag color="success">Paid</Tag>
-              : (r.is_overdue ? <Tag color="error">Overdue ({r.days_overdue}d)</Tag> : <Tag color="default">Pending</Tag>)
+      {/* When a welfare scheme is selected, show enrolled subscribers */}
+      {selectedGroup && (
+        <Card
+          title={
+            <Space>
+              <TeamOutlined style={{ color: '#2563eb' }} />
+              <Text strong style={{ color: 'var(--color-text-primary)' }}>
+                Enrolled Subscribers in {selectedGroupObj?.group_name || `Scheme ${selectedGroup}`} ({enrolledMembers.length})
+              </Text>
+            </Space>
           }
-        ]}
-      />
+          style={{ marginBottom: 20 }}
+          loading={enrollmentsLoading}
+        >
+          {enrolledMembers.length === 0 ? (
+            <div style={{ color: '#6b7280', padding: '16px 0', textAlign: 'center' }}>
+              No subscribers enrolled in this welfare scheme yet.
+            </div>
+          ) : (
+            <Table
+              dataSource={enrolledMembers}
+              rowKey="id"
+              size="small"
+              pagination={{ pageSize: 10 }}
+              scroll={{ x: true }}
+              columns={[
+                {
+                  title: 'Ticket #',
+                  dataIndex: 'ticket_number',
+                  width: 90,
+                  render: v => <Tag color="blue" style={{ fontWeight: 600 }}>#{v}</Tag>,
+                },
+                {
+                  title: 'Subscriber',
+                  key: 'subscriber',
+                  render: (_, r) => (
+                    <div>
+                      <div style={{ fontWeight: 600 }}>{r.member_name || (r.non_member_name ? `${r.non_member_name} (Non-Member)` : '—')}</div>
+                      <div style={{ fontSize: 11, color: '#9ba3bc' }}>{r.member_no || 'Non-Member'}</div>
+                    </div>
+                  ),
+                },
+                {
+                  title: 'Status',
+                  dataIndex: 'status',
+                  width: 110,
+                  render: v => <StatusBadge status={v} />,
+                },
+                {
+                  title: 'Paid Months',
+                  dataIndex: 'paid_months',
+                  width: 120,
+                  render: v => <Tag color="cyan">{v} Months</Tag>,
+                },
+                {
+                  title: 'Total Paid',
+                  dataIndex: 'total_paid_amount',
+                  width: 130,
+                  render: v => <Text strong style={{ color: '#16a34a' }}>{formatCurrency(v)}</Text>,
+                },
+                {
+                  title: 'Prize Won',
+                  key: 'prize_won',
+                  width: 120,
+                  render: (_, r) => r.prize_won ? <Tag color="gold">🏆 Won</Tag> : <Tag color="default">Eligible</Tag>,
+                },
+                {
+                  title: 'Guarantor 1',
+                  key: 'g1',
+                  render: (_, r) => r.guarantor1_name || (r.guarantor1_non_member_name ? `${r.guarantor1_non_member_name} (Non-Member)` : '—'),
+                },
+                {
+                  title: 'Guarantor 2',
+                  key: 'g2',
+                  render: (_, r) => r.guarantor2_name || (r.guarantor2_non_member_name ? `${r.guarantor2_non_member_name} (Non-Member)` : '—'),
+                },
+              ]}
+            />
+          )}
+        </Card>
+      )}
+
+      <Card
+        title={
+          <Space>
+            <CalendarOutlined style={{ color: '#7c3aed' }} />
+            <Text strong style={{ color: 'var(--color-text-primary)' }}>
+              Welfare Payment Transactions ({results.length})
+            </Text>
+          </Space>
+        }
+      >
+        <Table
+          dataSource={results}
+          rowKey="id"
+          size="small"
+          pagination={{ pageSize: 20 }}
+          loading={loading}
+          scroll={{ x: true }}
+          columns={[
+            { title: 'Member', key: 'member', render: (_, r) => <span>{r.member_name} ({r.member_no})</span> },
+            { title: 'Scheme', dataIndex: 'group_name' },
+            { title: 'Month', dataIndex: 'month_number', render: v => `Month ${v}` },
+            { title: 'Required', dataIndex: 'installment_amount', render: v => formatCurrency(v) },
+            { title: 'Paid', dataIndex: 'amount_paid', render: v => formatCurrency(v) },
+            { title: 'Due Date', dataIndex: 'due_date', render: v => formatDate(v) },
+            { title: 'Paid Date', dataIndex: 'paid_date', render: v => v ? formatDate(v) : '—' },
+            {
+              title: 'Status', key: 'status',
+              render: (_, r) => r.is_paid 
+                ? <Tag color="success">Paid</Tag>
+                : (r.is_overdue ? <Tag color="error">Overdue ({r.days_overdue}d)</Tag> : <Tag color="default">Pending</Tag>)
+            }
+          ]}
+        />
+      </Card>
     </div>
   )
 }

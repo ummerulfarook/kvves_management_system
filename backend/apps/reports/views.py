@@ -240,6 +240,7 @@ class ChitsSummaryView(APIView):
             total_expected = group.monthly_instalment * group.duration_months * enrolled
 
             by_group.append({
+                'id': group.id,
                 'group_no': group.group_no,
                 'group_name': group.group_name,
                 'status': group.status,
@@ -750,7 +751,11 @@ class WelfarePaymentsReportView(APIView):
         if member_id:
             qs = qs.filter(enrollment__member_id=member_id)
         if group_id:
-            qs = qs.filter(enrollment__chit_group_id=group_id)
+            from django.db.models import Q
+            filter_q = Q(enrollment__chit_group__group_no=str(group_id))
+            if str(group_id).isdigit():
+                filter_q |= Q(enrollment__chit_group_id=int(group_id))
+            qs = qs.filter(filter_q)
             
         today = timezone.now().date()
         if status == 'paid':

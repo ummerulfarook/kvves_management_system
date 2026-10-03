@@ -267,6 +267,7 @@ class MemberPhotoView(APIView):
 class MemberChitsView(generics.ListAPIView):
     """GET /api/members/{id}/chits/ — all chit enrollments for a member."""
 
+    pagination_class = None
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
@@ -283,6 +284,7 @@ class MemberChitsView(generics.ListAPIView):
 class MemberLoansView(generics.ListAPIView):
     """GET /api/members/{id}/loans/ — all loans for a member."""
 
+    pagination_class = None
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
@@ -398,6 +400,7 @@ class MemberDuesView(APIView):
 class MemberDepositsView(generics.ListAPIView):
     """GET /api/members/{id}/deposits/ — deposits for a member."""
 
+    pagination_class = None
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
@@ -412,6 +415,7 @@ class MemberDepositsView(generics.ListAPIView):
 class MemberGuarantorLoansView(generics.ListAPIView):
     """GET /api/members/{id}/guarantor-loans/ — loans where this member is a guarantor."""
 
+    pagination_class = None
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
@@ -429,6 +433,7 @@ class MemberGuarantorLoansView(generics.ListAPIView):
 class MemberGuarantorWelfareView(generics.ListAPIView):
     """GET /api/members/{id}/guarantor-welfare/ — welfare enrollments where this member is a guarantor."""
 
+    pagination_class = None
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
@@ -441,6 +446,20 @@ class MemberGuarantorWelfareView(generics.ListAPIView):
     def get_serializer_class(self):
         from apps.chits.serializers import ChitEnrollmentSerializer
         return ChitEnrollmentSerializer
+
+
+def get_default_masavari_amount_for_period(year, month, member=None):
+    """
+    Tiered Masavari amount calculation:
+    - Up to June 2026: ₹30 per member per month
+    - July 2026 onwards: ₹50 per member per month (or configured member rate if > 30)
+    """
+    from decimal import Decimal
+    if year < 2026 or (year == 2026 and month <= 6):
+        return Decimal('30.00')
+    if member and member.masavari_amount and member.masavari_amount > Decimal('30.00'):
+        return Decimal(str(member.masavari_amount))
+    return Decimal('50.00')
 
 
 class MemberMasavariView(APIView):
@@ -472,11 +491,9 @@ class MemberMasavariView(APIView):
         today = timezone.now().date()
         start_date = member.joining_date
         
-        # We start from joining_date's month
         curr = start_date.replace(day=1)
         end = today.replace(day=1)
 
-        # Create a set of (year, month) that are already recorded as paid in the database
         paid_set = set(
             payments.filter(status='paid').values_list('year', 'month')
         )
@@ -487,16 +504,20 @@ class MemberMasavariView(APIView):
             if year_month not in paid_set:
                 existing_pending = payments.filter(year=curr.year, month=curr.month, status='pending').first()
                 due_date = curr + relativedelta(day=5)
+                period_amount = get_default_masavari_amount_for_period(curr.year, curr.month, member)
                 
                 if existing_pending:
-                    pending_list.append(MasavariPaymentSerializer(existing_pending).data)
+                    p_data = MasavariPaymentSerializer(existing_pending).data
+                    if (curr.year < 2026 or (curr.year == 2026 and curr.month <= 6)):
+                        p_data['amount'] = str(period_amount)
+                    pending_list.append(p_data)
                 else:
                     pending_list.append({
                         'id': None,
                         'member': member.id,
                         'member_name': member.full_name,
                         'member_no': member.member_no,
-                        'amount': str(default_amount),
+                        'amount': str(period_amount),
                         'month': curr.month,
                         'year': curr.year,
                         'due_date': due_date.isoformat(),
@@ -509,10 +530,12 @@ class MemberMasavariView(APIView):
 
         pending_list.sort(key=lambda x: (x['year'], x['month']), reverse=False)
 
+        current_month_default = get_default_masavari_amount_for_period(today.year, today.month, member)
+
         return Response({
             'history': payments_data,
             'pending': pending_list,
-            'default_amount': str(default_amount)
+            'default_amount': str(current_month_default)
         })
 
 
@@ -661,64 +684,153 @@ class MemberClearMasavariView(APIView):
     def post(self, request, pk):
         from apps.members.models import Member
         from apps.dues.models import MasavariPayment
+        from apps.collections.models import DailyEntry
+        from apps.activities.models import ActivityLog
         from django.db import transaction
         import datetime
         from dateutil.relativedelta import relativedelta
         from decimal import Decimal
-        from django.utils import timezone
+        from apps.accounts.utils import get_local_today
 
         try:
             member = Member.objects.get(pk=pk)
         except Member.DoesNotExist:
             return Response({'error': True, 'message': 'Member not found'}, status=404)
 
+        today = get_local_today()
         payment_mode = request.data.get('payment_mode', 'cash')
         receipt_no = request.data.get('receipt_no', '')
-        clear_till_str = request.data.get('clear_till')
-        today = timezone.now().date()
-
-        end_date = today
-        if clear_till_str:
-            try:
-                if len(clear_till_str.strip()) == 7: # YYYY-MM
-                    end_date = datetime.datetime.strptime(clear_till_str.strip(), '%Y-%m').date()
-                else:
-                    end_date = datetime.datetime.strptime(clear_till_str.strip(), '%Y-%m-%d').date()
-            except ValueError:
-                pass
+        remarks = request.data.get('remarks', '')
+        
+        months_input = request.data.get('months')
 
         with transaction.atomic():
-            payments_qs = MasavariPayment.objects.filter(member=member)
-            default_amount = member.masavari_amount
+            total_cleared_amount = Decimal('0.00')
+            cleared_months_count = 0
 
-            start_date = member.joining_date
-            curr = start_date.replace(day=1)
-            end = end_date.replace(day=1)
-            paid_set = set(payments_qs.filter(status='paid').values_list('year', 'month'))
+            if months_input and isinstance(months_input, list):
+                for item in months_input:
+                    try:
+                        yr = int(item.get('year'))
+                        mo = int(item.get('month'))
+                    except (ValueError, TypeError):
+                        continue
+                    
+                    amt_val = item.get('amount')
+                    if amt_val is not None:
+                        try:
+                            amt = Decimal(str(amt_val))
+                        except Exception:
+                            amt = get_default_masavari_amount_for_period(yr, mo, member)
+                    else:
+                        amt = get_default_masavari_amount_for_period(yr, mo, member)
 
-            while curr <= end:
-                if (curr.year, curr.month) not in paid_set:
+                    curr_date = datetime.date(yr, mo, 1)
                     mas_payment, created = MasavariPayment.objects.get_or_create(
                         member=member,
-                        year=curr.year,
-                        month=curr.month,
+                        year=yr,
+                        month=mo,
                         defaults={
-                            'amount': default_amount,
-                            'due_date': curr + relativedelta(day=5),
+                            'amount': amt,
+                            'due_date': curr_date + relativedelta(day=5),
                         }
                     )
+                    mas_payment.amount = amt
                     mas_payment.status = 'paid'
                     mas_payment.paid_date = today
                     mas_payment.payment_mode = payment_mode
                     mas_payment.receipt_no = receipt_no
-                    mas_payment.remarks = f"{mas_payment.remarks}\nCleared via bulk masavari action."
+                    mas_payment.remarks = f"{mas_payment.remarks}\n{remarks}".strip() or "Cleared via massavari bulk clear."
                     mas_payment.recorded_by = request.user
                     mas_payment.save()
-                curr += relativedelta(months=1)
 
-            # Auto-reactivate if member status was inactive
+                    DailyEntry.objects.create(
+                        date=today,
+                        entry_type='income',
+                        category='masavari',
+                        amount=amt,
+                        description=f"Masavari (Monthly Fee) — {curr_date.strftime('%B %Y')} for {member.full_name} ({member.member_no})",
+                        member=member,
+                        payment_mode=payment_mode,
+                        receipt_no=receipt_no,
+                        recorded_by=request.user,
+                    )
+
+                    total_cleared_amount += amt
+                    cleared_months_count += 1
+            else:
+                clear_till_str = request.data.get('clear_till')
+                end_date = today
+                if clear_till_str:
+                    try:
+                        if len(clear_till_str.strip()) == 7:
+                            end_date = datetime.datetime.strptime(clear_till_str.strip(), '%Y-%m').date()
+                        else:
+                            end_date = datetime.datetime.strptime(clear_till_str.strip(), '%Y-%m-%d').date()
+                    except ValueError:
+                        pass
+
+                payments_qs = MasavariPayment.objects.filter(member=member)
+                start_date = member.joining_date
+                curr = start_date.replace(day=1)
+                end = end_date.replace(day=1)
+                paid_set = set(payments_qs.filter(status='paid').values_list('year', 'month'))
+
+                while curr <= end:
+                    if (curr.year, curr.month) not in paid_set:
+                        amt = get_default_masavari_amount_for_period(curr.year, curr.month, member)
+                        mas_payment, created = MasavariPayment.objects.get_or_create(
+                            member=member,
+                            year=curr.year,
+                            month=curr.month,
+                            defaults={
+                                'amount': amt,
+                                'due_date': curr + relativedelta(day=5),
+                            }
+                        )
+                        mas_payment.amount = amt
+                        mas_payment.status = 'paid'
+                        mas_payment.paid_date = today
+                        mas_payment.payment_mode = payment_mode
+                        mas_payment.receipt_no = receipt_no
+                        mas_payment.remarks = f"{mas_payment.remarks}\nCleared via bulk masavari action."
+                        mas_payment.recorded_by = request.user
+                        mas_payment.save()
+
+                        DailyEntry.objects.create(
+                            date=today,
+                            entry_type='income',
+                            category='masavari',
+                            amount=amt,
+                            description=f"Masavari (Monthly Fee) — {curr.strftime('%B %Y')} for {member.full_name} ({member.member_no})",
+                            member=member,
+                            payment_mode=payment_mode,
+                            receipt_no=receipt_no,
+                            recorded_by=request.user,
+                        )
+
+                        total_cleared_amount += amt
+                        cleared_months_count += 1
+                    curr += relativedelta(months=1)
+
+            if cleared_months_count > 0:
+                ActivityLog.objects.create(
+                    member=member,
+                    activity_type='masavari_paid',
+                    description=f"Cleared {cleared_months_count} pending Masavari month(s) for {member.full_name} ({member.member_no}), total ₹{total_cleared_amount} collected.",
+                    amount=total_cleared_amount,
+                    reference_id=str(member.id),
+                    reference_type='MemberMasavariCleared',
+                    performed_by=request.user,
+                )
+
             if member.status == 'inactive':
                 from apps.members.utils import check_and_reactivate_member
                 check_and_reactivate_member(member)
 
-        return Response({'message': 'All pending Masavari payments cleared.'})
+        return Response({
+            'success': True,
+            'message': f"Successfully cleared {cleared_months_count} Masavari month(s). Total collected: ₹{total_cleared_amount}.",
+            'total_cleared': str(total_cleared_amount),
+            'months_count': cleared_months_count
+        })

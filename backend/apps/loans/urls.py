@@ -12,5 +12,6 @@ urlpatterns = [
     path('loans/<int:pk>/approve/', views.LoanApproveView.as_view(), name='loans-approve'),
     path('loans/<int:pk>/close/', views.LoanCloseView.as_view(), name='loans-close'),
     path('loans/<int:loan_pk>/repayments/', views.LoanRepaymentListCreateView.as_view(), name='loan-repayments-list'),
+    path('loans/<int:loan_pk>/bulk-repayment/', views.LoanBulkRepaymentView.as_view(), name='loan-bulk-repayment'),
     path('repayments/<int:pk>/', views.LoanRepaymentDetailView.as_view(), name='loan-repayment-detail'),
 ]

@@ -166,8 +166,9 @@ const CollectionsPage = () => {
           }
         })
       } else {
-        const nextMonth = masavari?.pending?.[0]?.month || undefined
-        const amt = safeParseFloat(masavari?.default_amount) || 50
+        const nextPending = masavari?.pending?.[0]
+        const nextMonth = nextPending?.month || undefined
+        const amt = safeParseFloat(nextPending?.amount) || safeParseFloat(masavari?.default_amount) || 30
         form.setFieldsValue({
           month_number: nextMonth,
           amount: amt,

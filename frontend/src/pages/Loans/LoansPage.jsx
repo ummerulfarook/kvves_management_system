@@ -3,7 +3,7 @@ import {
   Table, Button, Select, Space, Typography, Tag, Modal, Form, Input, InputNumber,
   DatePicker, Tabs, message, Row, Col, Card, Descriptions,
 } from 'antd'
-import { PlusOutlined, EyeOutlined, CheckCircleOutlined, CloseCircleOutlined, EditOutlined } from '@ant-design/icons'
+import { PlusOutlined, EyeOutlined, CheckCircleOutlined, CloseCircleOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import * as loansApi from '../../api/loans'
 import * as membersApi from '../../api/members'
@@ -18,7 +18,7 @@ const { Title, Text } = Typography
 const { Option } = Select
 
 const LoansPage = () => {
-  const { canWrite, canApproveLoan } = usePermissions()
+  const { canWrite, canApproveLoan, canDelete } = usePermissions()
 
   const [loans, setLoans] = useState([])
   const [loading, setLoading] = useState(false)
@@ -37,6 +37,88 @@ const LoansPage = () => {
   const [approveForm] = Form.useForm()
   const [submitting, setSubmitting] = useState(false)
   const [members, setMembers] = useState([])
+
+  const [deleteModal, setDeleteModal] = useState({ open: false, loan: null, totalRepaid: 0 })
+  const [bulkModal, setBulkModal] = useState({ open: false, selectedRows: [], count: 0, emi: 0, total: 0 })
+  const [selectedRepaymentKeys, setSelectedRepaymentKeys] = useState([])
+  const [bulkForm] = Form.useForm()
+
+  const openDeleteModal = (loan) => {
+    const repaid = (loan.repayments || [])
+      .filter((r) => r.is_paid)
+      .reduce((sum, r) => sum + parseFloat(r.amount_paid || 0), 0)
+    setDeleteModal({ open: true, loan, totalRepaid: repaid })
+  }
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteModal.loan) return
+    setSubmitting(true)
+    try {
+      await loansApi.deleteLoan(deleteModal.loan.id)
+      message.success(`Loan ${deleteModal.loan.loan_no} has been permanently deleted.`)
+      setDeleteModal({ open: false, loan: null })
+      setSelectedLoan(null)
+      loadLoans()
+      loadOverdue()
+    } catch (err) {
+      message.error(err?.response?.data?.message || 'Failed to delete loan.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const openBulkModal = () => {
+    if (!selectedLoan || selectedRepaymentKeys.length === 0) return
+    const selectedRows = (selectedLoan.repayments || []).filter((r) =>
+      selectedRepaymentKeys.includes(r.id)
+    )
+    const emi = parseFloat(selectedLoan.emi_amount || 0)
+    const total = selectedRows.length * emi
+    bulkForm.resetFields()
+    bulkForm.setFieldsValue({
+      total_amount: total,
+      paid_date: dayjs(),
+      payment_mode: 'cash',
+      receipt_no: '',
+      remarks: '',
+    })
+    setBulkModal({ open: true, selectedRows, count: selectedRows.length, emi, total })
+  }
+
+  const handleBulkSubmit = async () => {
+    try {
+      const values = await bulkForm.validateFields()
+      const expectedTotal = bulkModal.count * bulkModal.emi
+      if (parseFloat(values.total_amount) !== expectedTotal) {
+        message.error(`Total amount must equal ${bulkModal.count} months × ₹${bulkModal.emi} = ₹${expectedTotal}`)
+        return
+      }
+
+      setSubmitting(true)
+      const payload = {
+        instalment_ids: bulkModal.selectedRows.map((r) => r.id),
+        total_amount: values.total_amount,
+        paid_date: values.paid_date?.format('YYYY-MM-DD'),
+        payment_mode: values.payment_mode,
+        receipt_no: values.receipt_no || '',
+        remarks: values.remarks || '',
+      }
+
+      const res = await loansApi.bulkRepayment(selectedLoan.id, payload)
+      message.success(res.data.message || 'Bulk repayments recorded successfully!')
+      setBulkModal({ open: false })
+      setSelectedRepaymentKeys([])
+      bulkForm.resetFields()
+      const updatedLoan = await loansApi.getLoan(selectedLoan.id)
+      setSelectedLoan(updatedLoan.data)
+      loadLoans()
+      loadOverdue()
+    } catch (err) {
+      message.error(err?.response?.data?.message || 'Failed to record bulk repayments.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   const loanMember = Form.useWatch('member', loanForm)
   const loanGuarantor = Form.useWatch('guarantor', loanForm)
@@ -262,6 +344,12 @@ const LoansPage = () => {
               Approve
             </Button>
           )}
+          {canDelete && (
+            <Button size="small" danger icon={<DeleteOutlined />}
+              onClick={() => openDeleteModal(row)}>
+              Delete
+            </Button>
+          )}
         </Space>
       ),
     },
@@ -301,14 +389,32 @@ const LoansPage = () => {
           ))}
         </Row>
 
-        {canApproveLoan && selectedLoan.status === 'active' && (
-          <Button
-            icon={<CloseCircleOutlined />} danger style={{ marginBottom: 12 }}
-            onClick={() => handleClose(selectedLoan.id)}
-          >
-            Close Loan
-          </Button>
-        )}
+        <Space style={{ marginBottom: 12 }}>
+          {canApproveLoan && selectedLoan.status === 'active' && (
+            <Button
+              icon={<CloseCircleOutlined />} danger
+              onClick={() => handleClose(selectedLoan.id)}
+            >
+              Close Loan
+            </Button>
+          )}
+          {canDelete && (
+            <Button
+              icon={<DeleteOutlined />} danger
+              onClick={() => openDeleteModal(selectedLoan)}
+            >
+              Delete Loan
+            </Button>
+          )}
+          {canWrite && selectedLoan.status === 'active' && selectedRepaymentKeys.length > 0 && (
+            <Button
+              type="primary"
+              onClick={openBulkModal}
+            >
+              Bulk Pay Selected EMIs ({selectedRepaymentKeys.length})
+            </Button>
+          )}
+        </Space>
 
         <Title level={5} style={{ marginTop: 8 }}>Repayment Schedule</Title>
         <Table
@@ -317,6 +423,13 @@ const LoansPage = () => {
           size="small"
           pagination={false}
           scroll={{ x: true }}
+          rowSelection={canWrite && selectedLoan.status === 'active' ? {
+            selectedRowKeys: selectedRepaymentKeys,
+            onChange: setSelectedRepaymentKeys,
+            getCheckboxProps: (record) => ({
+              disabled: record.is_paid,
+            }),
+          } : undefined}
           rowClassName={(row) => row.is_overdue ? 'text-overdue' : ''}
           columns={[
             { title: 'EMI #', dataIndex: 'instalment_no', width: 50 },
@@ -779,6 +892,88 @@ const LoansPage = () => {
           </Form.Item>
           <Form.Item label="Urgent Payout Charge (₹)" name="urgent_charge" initialValue={0} tooltip="Taken if loan amount is given before the grace period">
             <InputNumber min={0} style={{ width: '100%' }} prefix="₹" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* Delete Loan Confirmation Modal */}
+      <Modal
+        title={
+          <Space>
+            <DeleteOutlined style={{ color: '#ef4444' }} />
+            <span>Confirm Loan Deletion</span>
+          </Space>
+        }
+        open={deleteModal.open}
+        onCancel={() => setDeleteModal({ open: false, loan: null, totalRepaid: 0 })}
+        onOk={handleDeleteConfirm}
+        confirmLoading={submitting}
+        okText="Confirm Delete"
+        okType="danger"
+        width={540}
+      >
+        {deleteModal.loan && (
+          <div>
+            <div style={{ padding: '12px 16px', background: 'var(--color-bg-container)', borderRadius: 8, border: '1px solid var(--color-border)', marginBottom: 16 }}>
+              <Row gutter={[12, 8]}>
+                <Col span={12}><Text type="secondary">Loan Number:</Text> <div><Text strong style={{ color: '#2563eb' }}>{deleteModal.loan.loan_no}</Text></div></Col>
+                <Col span={12}><Text type="secondary">Member:</Text> <div><Text strong>{deleteModal.loan.member_name} ({deleteModal.loan.member_no})</Text></div></Col>
+                <Col span={12}><Text type="secondary">Loan Amount:</Text> <div><Text strong>{formatCurrency(deleteModal.loan.loan_amount)}</Text></div></Col>
+                <Col span={12}><Text type="secondary">Status:</Text> <div><StatusBadge status={deleteModal.loan.status} /></div></Col>
+                {deleteModal.totalRepaid > 0 && (
+                  <Col span={24} style={{ marginTop: 8 }}>
+                    <div style={{ padding: '8px 12px', background: '#fef2f2', borderRadius: 6, border: '1px solid #fecaca', color: '#991b1b', fontSize: 13 }}>
+                      <strong>Warning: Partially Repaid Loan!</strong>
+                      <div>Total amount already repaid: <strong>{formatCurrency(deleteModal.totalRepaid)}</strong>. Deleting this loan will permanently remove all related repayment records.</div>
+                    </div>
+                  </Col>
+                )}
+              </Row>
+            </div>
+            <div style={{ color: '#dc2626', fontSize: 13, lineHeight: '1.6' }}>
+              <strong>This action is permanent.</strong> Deleting this loan will remove all related payment records, guarantor links, and history entries. This cannot be undone.
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Bulk EMI Payment Modal */}
+      <Modal
+        title={`Bulk Pay EMIs — ${selectedLoan?.loan_no}`}
+        open={bulkModal.open}
+        onCancel={() => { setBulkModal({ open: false }); bulkForm.resetFields() }}
+        onOk={handleBulkSubmit}
+        confirmLoading={submitting}
+        okText="Record Bulk Payment"
+        width={520}
+      >
+        <Form form={bulkForm} layout="vertical">
+          <div style={{ padding: '10px 14px', background: '#eff6ff', borderRadius: 6, border: '1px solid #bfdbfe', marginBottom: 16, fontSize: 13 }}>
+            <div>Selected Months: <strong>{bulkModal.selectedRows?.map(r => `#${r.instalment_no}`).join(', ')}</strong> ({bulkModal.count} months)</div>
+            <div>Monthly EMI: <strong>{formatCurrency(bulkModal.emi)}</strong></div>
+            <div>Expected Total: <strong style={{ color: '#2563eb' }}>{formatCurrency(bulkModal.total)}</strong></div>
+          </div>
+          <Form.Item
+            label="Total Amount to Collect (₹)"
+            name="total_amount"
+            rules={[{ required: true, message: 'Please enter total amount' }]}
+            extra={`Must equal exactly ${bulkModal.count} × ₹${bulkModal.emi} = ₹${bulkModal.total}`}
+          >
+            <InputNumber min={0} style={{ width: '100%' }} prefix="₹" />
+          </Form.Item>
+          <Form.Item label="Payment Mode" name="payment_mode" initialValue="cash" rules={[{ required: true }]}>
+            <Select>
+              {PAYMENT_MODE_OPTIONS.map((o) => <Option key={o.value} value={o.value}>{o.label}</Option>)}
+            </Select>
+          </Form.Item>
+          <Form.Item label="Receipt / Ref No" name="receipt_no">
+            <Input placeholder="Optional receipt or reference number" />
+          </Form.Item>
+          <Form.Item label="Payment Date" name="paid_date" initialValue={dayjs()} rules={[{ required: true }]}>
+            <DatePicker style={{ width: '100%' }} format="DD/MM/YYYY" />
+          </Form.Item>
+          <Form.Item label="Remarks" name="remarks">
+            <Input placeholder="Optional remarks" />
           </Form.Item>
         </Form>
       </Modal>

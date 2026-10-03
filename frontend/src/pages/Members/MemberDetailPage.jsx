@@ -101,6 +101,29 @@ const MemberDetailPage = () => {
   const [clearMasavariModal, setClearMasavariModal] = useState(false)
   const [singleMasavariModal, setSingleMasavariModal] = useState({ open: false, record: null })
   
+  const [editablePendingMonths, setEditablePendingMonths] = useState([])
+  const [deleteLoanModal, setDeleteLoanModal] = useState({ open: false, loan: null, totalRepaid: 0 })
+
+  const openClearMasavari = () => {
+    const initial = masavariPending.map((m) => {
+      const defAmt = parseFloat(m.amount) || (m.year < 2026 || (m.year === 2026 && m.month <= 6) ? 30 : 50)
+      return {
+        ...m,
+        amount: defAmt,
+      }
+    })
+    setEditablePendingMonths(initial)
+    setClearMasavariModal(true)
+  }
+
+  const handlePendingMonthAmountChange = (idx, val) => {
+    setEditablePendingMonths((prev) => {
+      const next = [...prev]
+      next[idx] = { ...next[idx], amount: val }
+      return next
+    })
+  }
+
   const [welfareGroups, setWelfareGroups] = useState([])
   const [nomineeForm] = Form.useForm()
   const [depositForm] = Form.useForm()
@@ -364,8 +387,13 @@ const MemberDetailPage = () => {
     try {
       const values = await clearMasavariForm.validateFields()
       const payload = {
-        ...values,
-        clear_till: values.clear_till ? values.clear_till.startOf('month').format('YYYY-MM-DD') : null,
+        months: editablePendingMonths.map((m) => ({
+          year: m.year,
+          month: m.month,
+          amount: m.amount,
+        })),
+        payment_mode: values.payment_mode,
+        receipt_no: values.receipt_no || '',
       }
       await membersApi.clearMemberMasavari(id, payload)
       message.success('Masavari payments cleared successfully!')
@@ -750,6 +778,16 @@ const MemberDetailPage = () => {
                   Close
                 </Button>
               )}
+              {canDelete && (
+                <Button size="small" type="primary" danger icon={<DeleteOutlined />} onClick={() => {
+                  const repaid = (loan.repayments || [])
+                    .filter((r) => r.is_paid)
+                    .reduce((sum, r) => sum + parseFloat(r.amount_paid || 0), 0)
+                  setDeleteLoanModal({ open: true, loan, totalRepaid: repaid })
+                }}>
+                  Delete
+                </Button>
+              )}
             </Space>
           </Row>
           <Row gutter={16} style={{ marginBottom: 8 }}>
@@ -1118,7 +1156,7 @@ const MemberDetailPage = () => {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                     <Title level={5} style={{ margin: 0 }}>Pending Masavari (Monthly Fee)</Title>
                     {canWrite && masavariPending.length > 0 && (
-                      <Button type="primary" danger size="small" onClick={() => setClearMasavariModal(true)}>
+                      <Button type="primary" danger size="small" onClick={openClearMasavari}>
                         Clear Pending Masavari
                       </Button>
                     )}
@@ -1411,29 +1449,78 @@ const MemberDetailPage = () => {
 
       {/* Clear Masavari Modal */}
       <Modal
-        title="Clear Pending Masavari Up To Date"
+        title="Clear Pending Masavari"
         open={clearMasavariModal}
+        width={680}
         onCancel={() => { setClearMasavariModal(false); clearMasavariForm.resetFields() }}
         onOk={handleClearMasavariSubmit}
         confirmLoading={submitting}
-        okText="Clear Masavari"
-        okType="danger"
+        okText={`Clear All (${editablePendingMonths.length} Months)`}
+        okButtonProps={{ danger: true, disabled: editablePendingMonths.length === 0 }}
       >
         <Form form={clearMasavariForm} layout="vertical">
-          <Text type="warning" style={{ display: 'block', marginBottom: 16 }}>
-            This action will record full payment for all pending Masavari payments from the member's joining date up to the selected month.
+          <Text type="warning" style={{ display: 'block', marginBottom: 12 }}>
+            This will record individual monthly payments for all pending Masavari months up to the current date. Rates default to ₹30/mo up to June 2026 and ₹50/mo from July 2026 onwards. You can adjust the amount for any month below.
           </Text>
-          <Form.Item label="Clear Till Month" name="clear_till" initialValue={dayjs()} rules={[{ required: true, message: 'Required' }]}>
-            <DatePicker picker="month" format="MM/YYYY" style={{ width: '100%' }} disabledDate={(d) => d && d.isAfter(dayjs())} />
-          </Form.Item>
-          <Form.Item label="Payment Mode" name="payment_mode" initialValue="cash" rules={[{ required: true }]}>
-            <Select>
-              {PAYMENT_MODE_OPTIONS.map((o) => <Option key={o.value} value={o.value}>{o.label}</Option>)}
-            </Select>
-          </Form.Item>
-          <Form.Item label="Receipt / Ref No" name="receipt_no">
-            <Input placeholder="Optional reference number" />
-          </Form.Item>
+
+          <div style={{ maxHeight: 260, overflowY: 'auto', marginBottom: 16, border: '1px solid var(--color-border)', borderRadius: 6 }}>
+            <Table
+              dataSource={editablePendingMonths}
+              rowKey={(r) => `${r.year}-${r.month}`}
+              size="small"
+              pagination={false}
+              columns={[
+                {
+                  title: 'Month / Year',
+                  key: 'period',
+                  render: (_, r) => (
+                    <Text strong>{r.month_label || `${r.month}/${r.year}`}</Text>
+                  ),
+                },
+                {
+                  title: 'Due Date',
+                  dataIndex: 'due_date',
+                  render: (v) => formatDate(v),
+                },
+                {
+                  title: 'Amount (₹)',
+                  key: 'amount',
+                  width: 140,
+                  render: (_, r, idx) => (
+                    <InputNumber
+                      min={0}
+                      value={r.amount}
+                      onChange={(val) => handlePendingMonthAmountChange(idx, val)}
+                      prefix="₹"
+                      style={{ width: '100%' }}
+                    />
+                  ),
+                },
+              ]}
+            />
+          </div>
+
+          <Row justify="space-between" align="middle" style={{ background: 'var(--color-bg-secondary)', padding: '10px 16px', borderRadius: 6, marginBottom: 16 }}>
+            <Text strong>Total Masavari to Clear:</Text>
+            <Text strong style={{ fontSize: 18, color: '#ef4444' }}>
+              {formatCurrency(editablePendingMonths.reduce((acc, m) => acc + (parseFloat(m.amount) || 0), 0))}
+            </Text>
+          </Row>
+
+          <Row gutter={16}>
+            <Col xs={24} sm={12}>
+              <Form.Item label="Payment Mode" name="payment_mode" initialValue="cash" rules={[{ required: true }]}>
+                <Select>
+                  {PAYMENT_MODE_OPTIONS.map((o) => <Option key={o.value} value={o.value}>{o.label}</Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item label="Receipt / Ref No" name="receipt_no">
+                <Input placeholder="Optional reference number" />
+              </Form.Item>
+            </Col>
+          </Row>
         </Form>
       </Modal>
 
@@ -1545,6 +1632,63 @@ const MemberDetailPage = () => {
             </Card>
           </div>
         </div>
+      </Modal>
+
+      {/* Delete Loan Confirmation Modal */}
+      <Modal
+        title={
+          <Space>
+            <DeleteOutlined style={{ color: '#ef4444' }} />
+            <span>Confirm Loan Deletion</span>
+          </Space>
+        }
+        open={deleteLoanModal.open}
+        onCancel={() => setDeleteLoanModal({ open: false, loan: null, totalRepaid: 0 })}
+        onOk={async () => {
+          if (!deleteLoanModal.loan) return
+          setSubmitting(true)
+          try {
+            await loansApi.deleteLoan(deleteLoanModal.loan.id)
+            message.success(`Loan ${deleteLoanModal.loan.loan_no} has been permanently deleted.`)
+            setDeleteLoanModal({ open: false, loan: null, totalRepaid: 0 })
+            loadLoans()
+            loadDuesAndGuarantor()
+            dispatch(fetchMember(id))
+            dispatch(fetchMemberSummary(id))
+          } catch (err) {
+            message.error(err?.response?.data?.message || 'Failed to delete loan.')
+          } finally {
+            setSubmitting(false)
+          }
+        }}
+        confirmLoading={submitting}
+        okText="Confirm Delete"
+        okType="danger"
+        width={540}
+      >
+        {deleteLoanModal.loan && (
+          <div>
+            <div style={{ padding: '12px 16px', background: 'var(--color-bg-container)', borderRadius: 8, border: '1px solid var(--color-border)', marginBottom: 16 }}>
+              <Row gutter={[12, 8]}>
+                <Col span={12}><Text type="secondary">Loan Number:</Text> <div><Text strong style={{ color: '#2563eb' }}>{deleteLoanModal.loan.loan_no}</Text></div></Col>
+                <Col span={12}><Text type="secondary">Member:</Text> <div><Text strong>{member?.full_name} ({member?.member_no})</Text></div></Col>
+                <Col span={12}><Text type="secondary">Loan Amount:</Text> <div><Text strong>{formatCurrency(deleteLoanModal.loan.loan_amount)}</Text></div></Col>
+                <Col span={12}><Text type="secondary">Status:</Text> <div><StatusBadge status={deleteLoanModal.loan.status} /></div></Col>
+                {deleteLoanModal.totalRepaid > 0 && (
+                  <Col span={24} style={{ marginTop: 8 }}>
+                    <div style={{ padding: '8px 12px', background: '#fef2f2', borderRadius: 6, border: '1px solid #fecaca', color: '#991b1b', fontSize: 13 }}>
+                      <strong>Warning: Partially Repaid Loan!</strong>
+                      <div>Total amount already repaid: <strong>{formatCurrency(deleteLoanModal.totalRepaid)}</strong>. Deleting this loan will also permanently remove all related repayment records.</div>
+                    </div>
+                  </Col>
+                )}
+              </Row>
+            </div>
+            <div style={{ color: '#dc2626', fontSize: 13, lineHeight: '1.6' }}>
+              <strong>This action is permanent.</strong> Deleting this loan will remove all related payment records, guarantor links, and history entries. This cannot be undone.
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   )

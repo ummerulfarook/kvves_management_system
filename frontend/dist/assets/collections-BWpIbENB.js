@@ -1,1 +1,0 @@
-import{aM as a}from"./index-zM7OxBDX.js";const o=t=>a.get("/collections/daily/",{params:t}),s=t=>a.post("/collections/daily/",t),c=(t,l)=>a.patch(`/collections/daily/${t}/`,l),i=t=>a.get("/collections/summary/",{params:t}),n=t=>a.delete(`/collections/daily/${t}/`);export{i as a,s as c,n as d,o as g,c as u};
