@@ -327,8 +327,10 @@ class ChitPaymentListCreateView(generics.ListCreateAPIView):
             description=f"Welfare Payment (Partial/Full) — Month {payment.month_number} for {enrollment.member.full_name if enrollment.member else enrollment.non_member_name}",
             member=enrollment.member,
             payment_mode=payment.payment_mode,
+            receipt_no=payment.receipt_no,
             recorded_by=request.user,
         )
+
 
         # Activity log
         try:
@@ -399,6 +401,7 @@ class ChitBulkPaymentView(APIView):
                     if amount_to_pay > 0:
                         payment.amount_paid += amount_to_pay
                         payment.payment_mode = item.get('payment_mode', 'cash')
+                        payment.receipt_no = item.get('receipt_no', '')
                         payment.paid_date = timezone.now().date()
                         payment.recorded_by = request.user
                         if payment.amount_paid >= payment.installment_amount:
@@ -415,8 +418,10 @@ class ChitBulkPaymentView(APIView):
                             description=f"Welfare Payment (Bulk) — Month {payment.month_number} for {payment.enrollment.member.full_name if payment.enrollment.member else payment.enrollment.non_member_name}",
                             member=payment.enrollment.member,
                             payment_mode=payment.payment_mode,
+                            receipt_no=payment.receipt_no,
                             recorded_by=request.user,
                         )
+
                         recorded.append(payment.id)
             except ChitPayment.DoesNotExist:
                 errors.append(f"Payment not found: enrollment {item.get('enrollment_id')} month {item.get('month_number')}")

@@ -309,6 +309,24 @@ class LoanCloseView(APIView):
                 )
 
                 try:
+                    from apps.collections.models import DailyEntry
+                    DailyEntry.objects.create(
+                        date=today,
+                        entry_type='income',
+                        category='loan_emi',
+                        amount=outstanding,
+                        description=f"Loan Full Settlement / Closure — Final payment of ₹{outstanding} for {loan.member.full_name} ({loan.loan_no})",
+                        member=loan.member,
+                        loan_repayment=repayment,
+                        payment_mode=payment_mode,
+                        receipt_no=receipt_no,
+                        recorded_by=request.user,
+                    )
+
+                except Exception:
+                    pass
+
+                try:
                     from apps.activities.models import ActivityLog
                     ActivityLog.objects.create(
                         member=loan.member,

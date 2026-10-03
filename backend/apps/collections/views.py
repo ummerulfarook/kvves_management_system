@@ -295,10 +295,7 @@ class DailyEntryListCreateView(generics.ListCreateAPIView):
                     parsed_date = get_local_today()
                     year = parsed_date.year
 
-                # Determine the member's masavari rate
-                masavari_rate = member.masavari_amount or Decimal('50.00')
-                if masavari_rate <= 0:
-                    masavari_rate = Decimal('50.00')
+                from apps.members.views import get_default_masavari_amount_for_period
 
                 remaining_amount = Decimal(str(amount))
                 curr_month = int(month_number)
@@ -306,6 +303,8 @@ class DailyEntryListCreateView(generics.ListCreateAPIView):
                 paid_periods = []
 
                 while remaining_amount > 0:
+                    period_rate = get_default_masavari_amount_for_period(curr_year, curr_month, member)
+
                     existing_payment = MasavariPayment.objects.filter(
                         member=member,
                         year=curr_year,
@@ -313,7 +312,7 @@ class DailyEntryListCreateView(generics.ListCreateAPIView):
                     ).first()
 
                     already_paid = existing_payment.amount if (existing_payment and existing_payment.status == 'paid') else Decimal('0.00')
-                    needed = masavari_rate - already_paid
+                    needed = period_rate - already_paid
 
                     if needed <= 0:
                         curr_month += 1
@@ -337,7 +336,7 @@ class DailyEntryListCreateView(generics.ListCreateAPIView):
                             'due_date': due_date_for_month,
                             'paid_date': parsed_date,
                             'payment_mode': payment_mode,
-                            'status': 'paid' if (already_paid + pay_here >= masavari_rate) else 'pending',
+                            'status': 'paid' if (already_paid + pay_here >= period_rate) else 'pending',
                             'receipt_no': data.get('receipt_no', ''),
                             'recorded_by': request.user,
                         }
@@ -513,6 +512,21 @@ class DailyEntryDetailView(generics.RetrieveUpdateDestroyAPIView):
                     payment_mode=instance.payment_mode
                 )
 
+            # 5. Update linked Due or Curry Payment
+            if instance.due:
+                due = instance.due
+                due.paid_amount = instance.amount
+                due.paid_date = instance.date
+                due.save()
+
+            if instance.curry_payment:
+                cp = instance.curry_payment
+                cp.amount = instance.amount
+                cp.paid_date = instance.date
+                cp.payment_mode = instance.payment_mode
+                cp.save()
+
+
             # 5. Sync ActivityLog
             try:
                 from apps.activities.models import ActivityLog
@@ -554,10 +568,15 @@ class DailyEntryDetailView(generics.RetrieveUpdateDestroyAPIView):
                     ActivityLog.objects.filter(reference_id=str(instance.loan_repayment.id), reference_type='LoanRepayment').delete()
                 if instance.deposit:
                     ActivityLog.objects.filter(reference_id=str(instance.deposit.id), reference_type='Deposit').delete()
+                if instance.due:
+                    ActivityLog.objects.filter(reference_id=str(instance.due.id), reference_type='Due').delete()
+                if instance.curry_payment:
+                    ActivityLog.objects.filter(reference_id=str(instance.curry_payment.id), reference_type='CurryPayment').delete()
                 if instance.category == 'masavari' and instance.member:
                     ActivityLog.objects.filter(member=instance.member, activity_type='masavari_paid', timestamp__date=instance.date).delete()
             except Exception:
                 pass
+
 
             # 1. Revert Chit (Welfare) Payment
             if instance.chit_payment:
@@ -613,7 +632,22 @@ class DailyEntryDetailView(generics.RetrieveUpdateDestroyAPIView):
             if instance.deposit:
                 instance.deposit.delete()
 
-            # 4. Revert Masavari Payment
+            # 4. Revert Due
+            if instance.due:
+                due = instance.due
+                due.status = 'pending'
+                due.paid_amount = Decimal('0.00')
+                due.paid_date = None
+                due.save()
+
+            # 5. Revert Curry Payment
+            if instance.curry_payment:
+                cp = instance.curry_payment
+                cp.is_paid = False
+                cp.paid_date = None
+                cp.save()
+
+            # 6. Revert Masavari Payment
             if instance.category == 'masavari' and instance.member:
                 import re
                 pairs = re.findall(r'(\d+)/(\d+)', instance.description or '')
@@ -631,5 +665,6 @@ class DailyEntryDetailView(generics.RetrieveUpdateDestroyAPIView):
                     else:
                         MasavariPayment.objects.filter(member=instance.member, paid_date=instance.date, amount=instance.amount).delete()
 
-            # 5. Delete the DailyEntry itself
+            # 7. Delete the DailyEntry itself
             instance.delete()
+

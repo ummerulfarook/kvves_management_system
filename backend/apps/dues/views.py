@@ -13,6 +13,8 @@ from django_filters.rest_framework import DjangoFilterBackend
 from .models import Deposit, Due, MasavariPayment
 from .serializers import DepositSerializer, DueSerializer, MasavariPaymentSerializer
 from apps.accounts.permissions import IsAdminOrStaffOrReadOnly
+from apps.members.views import get_default_masavari_amount_for_period
+
 
 
 class DepositListCreateView(generics.ListCreateAPIView):
@@ -30,6 +32,23 @@ class DepositListCreateView(generics.ListCreateAPIView):
     def perform_create(self, serializer):
         deposit = serializer.save(recorded_by=self.request.user)
         try:
+            from apps.collections.models import DailyEntry
+            DailyEntry.objects.create(
+                deposit=deposit,
+                date=deposit.deposit_date,
+                entry_type='income',
+                category='deposit',
+                amount=deposit.amount,
+                description=f"{deposit.get_deposit_type_display()} — Deposit received from {deposit.member.full_name} ({deposit.member.member_no})",
+                member=deposit.member,
+                payment_mode=deposit.payment_mode or 'cash',
+                receipt_no=deposit.receipt_no or '',
+                recorded_by=self.request.user,
+            )
+        except Exception:
+            pass
+
+        try:
             from apps.activities.models import ActivityLog
             ActivityLog.objects.create(
                 member=deposit.member,
@@ -42,6 +61,7 @@ class DepositListCreateView(generics.ListCreateAPIView):
             )
         except Exception:
             pass
+
 
 
 class DepositDetailView(generics.RetrieveUpdateAPIView):
@@ -67,6 +87,22 @@ class DepositWithdrawView(APIView):
         deposit.save()
 
         try:
+            from apps.collections.models import DailyEntry
+            DailyEntry.objects.create(
+                deposit=deposit,
+                date=timezone.now().date(),
+                entry_type='expense',
+                category='other_expense',
+                amount=deposit.amount,
+                description=f"Deposit Withdrawal — {deposit.get_deposit_type_display()} of ₹{deposit.amount} refunded to {deposit.member.full_name} ({deposit.member.member_no})",
+                member=deposit.member,
+                payment_mode='cash',
+                recorded_by=request.user,
+            )
+        except Exception:
+            pass
+
+        try:
             from apps.activities.models import ActivityLog
             ActivityLog.objects.create(
                 member=deposit.member,
@@ -81,6 +117,7 @@ class DepositWithdrawView(APIView):
             pass
 
         return Response({'message': 'Deposit marked as withdrawn.'})
+
 
 
 class DueListCreateView(generics.ListCreateAPIView):
@@ -123,10 +160,31 @@ class DueMarkPaidView(APIView):
         except Due.DoesNotExist:
             return Response({'error': True, 'message': 'Due not found.'}, status=status.HTTP_404_NOT_FOUND)
 
+        payment_mode = request.data.get('payment_mode', 'cash')
+        receipt_no = request.data.get('receipt_no', '')
+        paid_date = request.data.get('paid_date') or timezone.now().date()
+
         due.status = 'paid'
-        due.paid_date = timezone.now().date()
+        due.paid_date = paid_date
         due.paid_amount = due.amount
         due.save()
+
+        try:
+            from apps.collections.models import DailyEntry
+            DailyEntry.objects.create(
+                due=due,
+                date=due.paid_date,
+                entry_type='income',
+                category='due',
+                amount=due.paid_amount or due.amount,
+                description=f"Due Payment — {due.get_due_type_display()} for {due.member.full_name} ({due.member.member_no})",
+                member=due.member,
+                payment_mode=payment_mode,
+                receipt_no=receipt_no,
+                recorded_by=request.user,
+            )
+        except Exception:
+            pass
 
         try:
             from apps.activities.models import ActivityLog
@@ -143,6 +201,7 @@ class DueMarkPaidView(APIView):
             pass
 
         return Response({'message': 'Due marked as paid.'})
+
 
 
 class DueOverdueView(generics.ListAPIView):
@@ -205,11 +264,37 @@ class MasavariListCreateView(generics.ListCreateAPIView):
         payment = serializer.save(recorded_by=self.request.user)
         if payment.status == 'paid':
             self.log_activity(payment)
+            self.record_daily_entry(payment)
 
     def perform_update(self, serializer):
         payment = serializer.save(recorded_by=self.request.user)
         if payment.status == 'paid':
             self.log_activity(payment)
+            self.record_daily_entry(payment)
+
+    def record_daily_entry(self, payment):
+        try:
+            from apps.collections.models import DailyEntry
+            exists = DailyEntry.objects.filter(
+                member=payment.member,
+                category='masavari',
+                date=payment.paid_date or timezone.now().date(),
+                description__icontains=f"{payment.month}/{payment.year}"
+            ).exists()
+            if not exists:
+                DailyEntry.objects.create(
+                    date=payment.paid_date or timezone.now().date(),
+                    entry_type='income',
+                    category='masavari',
+                    amount=payment.amount,
+                    description=f"Masavari (Monthly Due) paid for {payment.month}/{payment.year} — ₹{payment.amount}.",
+                    member=payment.member,
+                    payment_mode=payment.payment_mode or 'cash',
+                    receipt_no=payment.receipt_no or '',
+                    recorded_by=self.request.user,
+                )
+        except Exception:
+            pass
 
     def log_activity(self, payment):
         try:
@@ -225,6 +310,7 @@ class MasavariListCreateView(generics.ListCreateAPIView):
             )
         except Exception:
             pass
+
 
 
 class MasavariDetailView(generics.RetrieveUpdateAPIView):
@@ -254,6 +340,29 @@ class MasavariMarkPaidView(APIView):
         payment.save()
 
         try:
+            from apps.collections.models import DailyEntry
+            exists = DailyEntry.objects.filter(
+                member=payment.member,
+                category='masavari',
+                date=payment.paid_date,
+                description__icontains=f"{payment.month}/{payment.year}"
+            ).exists()
+            if not exists:
+                DailyEntry.objects.create(
+                    date=payment.paid_date,
+                    entry_type='income',
+                    category='masavari',
+                    amount=payment.amount,
+                    description=f"Masavari (Monthly Due) paid for {payment.month}/{payment.year} — ₹{payment.amount}.",
+                    member=payment.member,
+                    payment_mode=payment.payment_mode or 'cash',
+                    receipt_no=payment.receipt_no or '',
+                    recorded_by=request.user,
+                )
+        except Exception:
+            pass
+
+        try:
             from apps.activities.models import ActivityLog
             ActivityLog.objects.create(
                 member=payment.member,
@@ -268,6 +377,7 @@ class MasavariMarkPaidView(APIView):
             pass
 
         return Response({'message': 'Masavari payment marked as paid.'})
+
 
 
 class MasavariDueListView(APIView):
@@ -341,6 +451,8 @@ class MasavariDueListView(APIView):
                     is_overdue = due_date < today
                     days_overdue = (today - due_date).days if is_overdue else 0
                     existing = existing_map.get((member.id, yr, mo))
+                    default_amount = get_default_masavari_amount_for_period(yr, mo, member)
+                    amount_val = existing.amount if (existing and existing.amount) else default_amount
                     dues_list.append({
                         'id': existing.id if existing else None,
                         'member': member.id,
@@ -348,7 +460,7 @@ class MasavariDueListView(APIView):
                         'member_no': member.member_no,
                         'month': mo,
                         'year': yr,
-                        'amount': str(existing.amount if existing else member.masavari_amount),
+                        'amount': str(amount_val),
                         'due_date': due_date.isoformat(),
                         'paid_date': None,
                         'payment_mode': existing.payment_mode if existing else 'cash',
@@ -359,6 +471,7 @@ class MasavariDueListView(APIView):
                         'month_label': curr.strftime('%B %Y'),
                     })
                 curr += relativedelta(months=1)
+
 
         # Sort: overdue first then pending, then by year/month
         dues_list.sort(key=lambda x: (not x['is_overdue'], x['year'], x['month']))

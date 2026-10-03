@@ -116,6 +116,40 @@ class CurryPaymentListCreateView(generics.ListCreateAPIView):
         payment.paid_date = payment.paid_date or timezone.now().date()
         payment.save()
 
+        try:
+            from apps.collections.models import DailyEntry
+            name = participant.display_name or (participant.member.full_name if participant.member else 'Participant')
+            DailyEntry.objects.create(
+                curry_payment=payment,
+                date=payment.paid_date,
+                entry_type='income',
+                category='curry_payment',
+                amount=payment.amount,
+                description=f"Curry Payment — Month {payment.month_number} for {name} (Curry {participant.curry.curry_no})",
+                member=participant.member if participant.is_member else None,
+                payment_mode=payment.payment_mode or 'cash',
+                receipt_no=payment.receipt_no or '',
+                recorded_by=self.request.user,
+            )
+        except Exception:
+            pass
+
+        try:
+            from apps.activities.models import ActivityLog
+            if participant.is_member and participant.member:
+                ActivityLog.objects.create(
+                    member=participant.member,
+                    activity_type='curry_payment',
+                    description=f"Curry payment Month {payment.month_number} recorded for ₹{payment.amount}.",
+                    amount=payment.amount,
+                    reference_id=str(payment.id),
+                    reference_type='CurryPayment',
+                    performed_by=self.request.user,
+                )
+        except Exception:
+            pass
+
+
 
 class CurryOverdueView(generics.ListAPIView):
     """GET /api/curries/overdue/ — all overdue curry payments."""
@@ -154,13 +188,34 @@ class CurryBulkPaymentView(APIView):
                     payment.is_paid = True
                     payment.paid_date = timezone.now().date()
                     payment.payment_mode = item.get('payment_mode', 'cash')
+                    payment.receipt_no = item.get('receipt_no', '')
                     payment.recorded_by = request.user
                     payment.save()
                     recorded.append(payment.id)
+
+                    try:
+                        from apps.collections.models import DailyEntry
+                        part = payment.participant
+                        name = part.display_name or (part.member.full_name if part.member else 'Participant')
+                        DailyEntry.objects.create(
+                            curry_payment=payment,
+                            date=payment.paid_date,
+                            entry_type='income',
+                            category='curry_payment',
+                            amount=payment.amount,
+                            description=f"Curry Payment (Bulk) — Month {payment.month_number} for {name} (Curry {part.curry.curry_no})",
+                            member=part.member if part.is_member else None,
+                            payment_mode=payment.payment_mode,
+                            receipt_no=payment.receipt_no,
+                            recorded_by=request.user,
+                        )
+                    except Exception:
+                        pass
             except CurryPayment.DoesNotExist:
                 errors.append(f"Payment not found: participant {item.get('participant_id')} month {item.get('month_number')}")
 
         return Response({'recorded': len(recorded), 'errors': errors})
+
 
 
 class CurryStatsView(APIView):

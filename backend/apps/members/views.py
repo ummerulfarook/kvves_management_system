@@ -347,21 +347,18 @@ class MemberDuesView(APIView):
 
         # 4. Masavari pending months
         payments_qs = MasavariPayment.objects.filter(member=member)
-        last_paid = payments_qs.filter(status='paid').order_by('-year', '-month').first()
-        default_amount = last_paid.amount if last_paid else Decimal('50.00')
-
         start_date = member.joining_date
         curr = start_date.replace(day=1)
         end = today.replace(day=1)
         paid_set = set(payments_qs.filter(status='paid').values_list('year', 'month'))
 
         masavari_pending_count = 0
+        masavari_pending_total = Decimal('0.00')
         while curr <= end:
             if (curr.year, curr.month) not in paid_set:
                 masavari_pending_count += 1
+                masavari_pending_total += get_default_masavari_amount_for_period(curr.year, curr.month, member)
             curr += relativedelta(months=1)
-
-        masavari_pending_total = masavari_pending_count * default_amount
 
         total_combined_dues = standard_dues_total + loans_pending_total + welfares_pending_total + masavari_pending_total
 
@@ -583,6 +580,8 @@ class MemberClearDuesView(APIView):
         remarks = request.data.get('remarks', 'Bulk cleared dues.')
         today = timezone.now().date()
 
+        from apps.collections.models import DailyEntry
+
         with transaction.atomic():
             # 1. Clear standard dues
             standard_dues = Due.objects.filter(member=member, status='pending')
@@ -593,13 +592,27 @@ class MemberClearDuesView(APIView):
                 d.remarks = f"{d.remarks}\nCleared via bulk action."
                 d.save()
 
+                DailyEntry.objects.create(
+                    due=d,
+                    date=today,
+                    entry_type='income',
+                    category='due',
+                    amount=d.amount,
+                    description=f"Due Payment — {d.due_type.replace('_', ' ').title()} for {member.full_name} ({member.member_no})",
+                    member=member,
+                    payment_mode=payment_mode,
+                    receipt_no=receipt_no,
+                    recorded_by=request.user,
+                )
+
             # 2. Clear overdue loan repayments
             loans_pending = LoanRepayment.objects.filter(
                 loan__member=member,
                 loan__status='active',
                 is_paid=False,
                 due_date__lte=today
-            )
+            ).select_related('loan')
+            affected_loans = set()
             for r in loans_pending:
                 r.is_paid = True
                 r.paid_date = today
@@ -607,6 +620,24 @@ class MemberClearDuesView(APIView):
                 r.receipt_no = receipt_no
                 r.remarks = f"{r.remarks}\nCleared via bulk action."
                 r.save()
+                affected_loans.add(r.loan)
+
+                DailyEntry.objects.create(
+                    loan_repayment=r,
+                    date=today,
+                    entry_type='income',
+                    category='loan_emi',
+                    amount=r.amount_paid or r.loan.emi_amount,
+                    description=f"Loan EMI Payment — Installment {r.instalment_no} for {member.full_name} (Loan {r.loan.loan_no})",
+                    member=member,
+                    payment_mode=payment_mode,
+                    receipt_no=receipt_no,
+                    recorded_by=request.user,
+                )
+
+
+            for l in affected_loans:
+                l.update_outstanding_balance()
 
             # 3. Clear overdue welfare payments
             welfares_pending = ChitPayment.objects.filter(
@@ -625,8 +656,6 @@ class MemberClearDuesView(APIView):
                 p.remarks = f"{p.remarks}\nCleared via bulk action."
                 p.save()
 
-                # Create DailyEntry manually
-                from apps.collections.models import DailyEntry
                 DailyEntry.objects.create(
                     chit_payment=p,
                     date=today,
@@ -636,12 +665,12 @@ class MemberClearDuesView(APIView):
                     description=f"Welfare Payment — Month {p.month_number} for {member.full_name}",
                     member=member,
                     payment_mode=payment_mode,
+                    receipt_no=receipt_no,
                     recorded_by=request.user,
                 )
 
             # 4. Clear pending masavari payments
             payments_qs = MasavariPayment.objects.filter(member=member)
-            default_amount = member.masavari_amount
 
             start_date = member.joining_date
             curr = start_date.replace(day=1)
@@ -650,15 +679,17 @@ class MemberClearDuesView(APIView):
 
             while curr <= end:
                 if (curr.year, curr.month) not in paid_set:
+                    amt = get_default_masavari_amount_for_period(curr.year, curr.month, member)
                     mas_payment, created = MasavariPayment.objects.get_or_create(
                         member=member,
                         year=curr.year,
                         month=curr.month,
                         defaults={
-                            'amount': default_amount,
+                            'amount': amt,
                             'due_date': curr + relativedelta(day=5),
                         }
                     )
+                    mas_payment.amount = amt
                     mas_payment.status = 'paid'
                     mas_payment.paid_date = today
                     mas_payment.payment_mode = payment_mode
@@ -666,6 +697,18 @@ class MemberClearDuesView(APIView):
                     mas_payment.remarks = f"{mas_payment.remarks}\nCleared via bulk action."
                     mas_payment.recorded_by = request.user
                     mas_payment.save()
+
+                    DailyEntry.objects.create(
+                        date=today,
+                        entry_type='income',
+                        category='masavari',
+                        amount=amt,
+                        description=f"Masavari (Monthly Fee) — {curr.strftime('%B %Y')} for {member.full_name} ({member.member_no})",
+                        member=member,
+                        payment_mode=payment_mode,
+                        receipt_no=receipt_no,
+                        recorded_by=request.user,
+                    )
                 curr += relativedelta(months=1)
 
             # Auto-reactivate if member status was inactive
@@ -673,6 +716,17 @@ class MemberClearDuesView(APIView):
                 member.status = 'active'
                 member.remarks = (member.remarks or "") + f"\nAuto-reactivated on {today} after clearing all dues."
                 member.save()
+
+            try:
+                from apps.activities.models import ActivityLog
+                ActivityLog.objects.create(
+                    member=member,
+                    activity_type='due_paid',
+                    description=f"Cleared all pending dues, overdue repayments, and Masavari payments up to date for {member.full_name}.",
+                    performed_by=request.user,
+                )
+            except Exception:
+                pass
 
         return Response({'message': 'All overdue dues, repayments, and Masavari payments cleared successfully.'})
 
