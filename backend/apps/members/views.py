@@ -177,14 +177,22 @@ class MemberSummaryView(APIView):
         today = timezone.now().date()
 
         # Chit enrollments (welfare)
+        total_chits = member.chit_enrollments.count()
         active_chits = member.chit_enrollments.filter(status='active').count()
+        closed_chits = member.chit_enrollments.filter(
+            Q(status__in=['awarded', 'completed', 'defaulted', 'transferred']) |
+            Q(chit_group__status__in=['completed', 'terminated'])
+        ).distinct().count()
+
         chit_paid_agg = member.chit_enrollments.aggregate(
             total_paid=Sum('payments__amount_paid', filter=Q(payments__is_paid=True))
         )
         total_chit_paid = chit_paid_agg['total_paid'] or Decimal('0.00')
 
         # Loans
+        total_loans = member.loans.count()
         active_loans = member.loans.filter(status='active').count()
+        closed_loans = member.loans.filter(status__in=['closed', 'written_off']).count()
         loan_outstanding_agg = member.loans.filter(
             status__in=['active', 'pending']
         ).aggregate(total=Sum('outstanding_balance'))
@@ -211,19 +219,32 @@ class MemberSummaryView(APIView):
         ).aggregate(total=Sum('amount'))
         total_due_amount = due_amount_agg['total'] or Decimal('0.00')
 
+        # Allowances
+        allowances_agg = member.allowances.aggregate(
+            total=Sum('amount'), count=Count('id')
+        )
+        total_allowance_amount = allowances_agg['total'] or Decimal('0.00')
+        total_allowance_count = allowances_agg['count'] or 0
+
         return Response({
             'member_id': member.id,
             'member_no': member.member_no,
             'full_name': member.full_name,
             'status': member.status,
             'active_chits': active_chits,
+            'total_chits': total_chits,
+            'closed_chits': closed_chits,
             'total_chit_paid': str(total_chit_paid),
             'active_loans': active_loans,
+            'total_loans': total_loans,
+            'closed_loans': closed_loans,
             'total_loan_outstanding': str(total_loan_outstanding),
             'guarantor_loans_count': guarantor_loans_count,
             'guarantor_welfares_count': guarantor_welfares_count,
             'pending_dues': pending_dues,
             'total_due_amount': str(total_due_amount),
+            'total_allowance_amount': str(total_allowance_amount),
+            'total_allowance_count': total_allowance_count,
         })
 
 
@@ -545,7 +566,23 @@ class MemberAllowancesView(generics.ListCreateAPIView):
         return Allowance.objects.filter(member_id=self.kwargs['pk']).order_by('-paid_date')
 
     def perform_create(self, serializer):
-        serializer.save(member_id=self.kwargs['pk'])
+        from apps.members.models import Member
+        from apps.activities.models import ActivityLog
+        member = Member.objects.get(pk=self.kwargs['pk'])
+        allowance = serializer.save(member=member)
+        try:
+            performed_by = self.request.user if self.request.user.is_authenticated else None
+            ActivityLog.objects.create(
+                member=member,
+                activity_type='other',
+                description=f"Allowance recorded: {allowance.title} — ₹{allowance.amount}.",
+                amount=allowance.amount,
+                reference_id=str(allowance.id),
+                reference_type='Allowance',
+                performed_by=performed_by,
+            )
+        except Exception:
+            pass
 
 
 class AllowanceDetailView(generics.RetrieveUpdateDestroyAPIView):

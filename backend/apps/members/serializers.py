@@ -115,13 +115,19 @@ class MemberSummarySerializer(serializers.Serializer):
     member_no = serializers.CharField()
     full_name = serializers.CharField()
     status = serializers.CharField()
-    total_deposits = serializers.DecimalField(max_digits=14, decimal_places=2)
+    total_deposits = serializers.DecimalField(max_digits=14, decimal_places=2, required=False)
     active_chits = serializers.IntegerField()
+    total_chits = serializers.IntegerField(required=False, default=0)
+    closed_chits = serializers.IntegerField(required=False, default=0)
     total_chit_paid = serializers.DecimalField(max_digits=14, decimal_places=2)
     active_loans = serializers.IntegerField()
+    total_loans = serializers.IntegerField(required=False, default=0)
+    closed_loans = serializers.IntegerField(required=False, default=0)
     total_loan_outstanding = serializers.DecimalField(max_digits=14, decimal_places=2)
     pending_dues = serializers.IntegerField()
     total_due_amount = serializers.DecimalField(max_digits=14, decimal_places=2)
+    total_allowance_amount = serializers.DecimalField(max_digits=14, decimal_places=2, required=False)
+    total_allowance_count = serializers.IntegerField(required=False, default=0)
 
 
 class MemberPhotoSerializer(serializers.ModelSerializer):
@@ -131,10 +137,12 @@ class MemberPhotoSerializer(serializers.ModelSerializer):
 
 
 class AllowanceSerializer(serializers.ModelSerializer):
+    member = serializers.PrimaryKeyRelatedField(read_only=True)
     member_name = serializers.CharField(source='member.full_name', read_only=True)
     member_no = serializers.CharField(source='member.member_no', read_only=True)
 
     class Meta:
         model = Allowance
         fields = '__all__'
-        read_only_fields = ['created_at']
+        read_only_fields = ['created_at', 'member']
+

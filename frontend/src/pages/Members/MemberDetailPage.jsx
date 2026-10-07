@@ -140,6 +140,13 @@ const MemberDetailPage = () => {
   const loanGuarantor = Form.useWatch('guarantor', loanApplyForm)
   const loanGuarantor2 = Form.useWatch('guarantor2', loanApplyForm)
 
+  const totalLoans = summary?.total_loans !== undefined ? summary.total_loans : loans.length
+  const closedLoans = summary?.closed_loans !== undefined ? summary.closed_loans : loans.filter(l => ['closed', 'completed', 'written_off'].includes(l.status)).length
+
+  const totalWelfares = summary?.total_chits !== undefined ? summary.total_chits : chits.length
+  const activeWelfares = summary?.active_chits !== undefined ? summary.active_chits : chits.filter(c => c.status === 'active' && (!c.group_status || !['completed', 'terminated'].includes(c.group_status))).length
+  const closedWelfares = summary?.closed_chits !== undefined ? summary.closed_chits : chits.filter(c => ['awarded', 'completed', 'defaulted', 'transferred'].includes(c.status) || ['completed', 'terminated'].includes(c.group_status)).length
+
   const loadMembers = async (search = '') => {
     try {
       const res = await membersApi.getMembers({ search, status: 'active', page_size: 100 })
@@ -334,9 +341,12 @@ const MemberDetailPage = () => {
       setAllowanceModal(false)
       allowanceForm.resetFields()
       loadAllowances()
+      loadActivities()
       dispatch(fetchMemberSummary(id))
     } catch (err) {
-      if (err?.response?.data?.message) message.error(err.response.data.message)
+      const data = err?.response?.data
+      const msg = data?.message || data?.detail || (typeof data === 'object' ? Object.entries(data).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(' ') : v}`).join(' | ') : null) || 'Failed to record allowance.'
+      message.error(msg)
     } finally {
       setSubmitting(false)
     }
@@ -641,7 +651,12 @@ const MemberDetailPage = () => {
   const chitsTab = (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Title level={5} style={{ margin: 0 }}>Welfare Enrollments</Title>
+        <Space align="baseline" size={12}>
+          <Title level={5} style={{ margin: 0 }}>Welfare Enrollments</Title>
+          <Text style={{ color: '#9ba3bc', fontSize: 13 }}>
+            Total: {totalWelfares} | Active: {activeWelfares} | Closed: {closedWelfares}
+          </Text>
+        </Space>
         {canWrite && (
           <Button type="primary" icon={<PlusOutlined />} size="small" id="enroll-welfare-btn"
             onClick={() => {
@@ -751,7 +766,12 @@ const MemberDetailPage = () => {
   const loansTab = (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Title level={5} style={{ margin: 0 }}>Loan Details</Title>
+        <Space align="baseline" size={12}>
+          <Title level={5} style={{ margin: 0 }}>Loan Details</Title>
+          <Text style={{ color: '#9ba3bc', fontSize: 13 }}>
+            Total: {totalLoans} | Closed: {closedLoans}
+          </Text>
+        </Space>
         {canWrite && (
           <Button type="primary" icon={<PlusOutlined />} size="small" id="apply-loan-btn"
             onClick={() => { loadMembers(); setLoanApplyModal(true) }}>
@@ -1108,8 +1128,18 @@ const MemberDetailPage = () => {
       {summary && (
         <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
           {[
-            { title: 'Active Welfares', value: summary.active_chits, color: '#3b82f6' },
-            { title: 'Active Loans', value: summary.active_loans, color: '#8b5cf6' },
+            {
+              title: 'Active Welfares',
+              value: summary.active_chits,
+              color: '#3b82f6',
+              subtitle: `Total: ${totalWelfares} | Closed: ${closedWelfares}`,
+            },
+            {
+              title: 'Active Loans',
+              value: summary.active_loans,
+              color: '#8b5cf6',
+              subtitle: `Total: ${totalLoans} | Closed: ${closedLoans}`,
+            },
             { title: 'Outstanding Loans', value: summary.total_loan_outstanding, color: '#ef4444', prefix: '₹', isCurrency: true },
             { title: 'Pending Dues', value: summary.pending_dues, color: '#f59e0b' },
             { title: 'Guarantor For (Loans)', value: summary.guarantor_loans_count || 0, color: '#0d9488' },
@@ -1121,6 +1151,11 @@ const MemberDetailPage = () => {
                 <Text style={{ fontSize: 18, fontWeight: 700, color: stat.color }}>
                   {stat.isCurrency ? formatCurrency(stat.value, 0) : stat.value}
                 </Text>
+                {stat.subtitle && (
+                  <Text style={{ color: '#9ba3bc', fontSize: 11, display: 'block', marginTop: 2 }}>
+                    {stat.subtitle}
+                  </Text>
+                )}
               </Card>
             </Col>
           ))}

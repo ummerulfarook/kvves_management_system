@@ -84,6 +84,7 @@ class ChitEnrollmentSerializer(serializers.ModelSerializer):
     member_no = serializers.SerializerMethodField()
     group_name = serializers.CharField(source='chit_group.group_name', read_only=True)
     group_no = serializers.CharField(source='chit_group.group_no', read_only=True)
+    group_status = serializers.CharField(source='chit_group.status', read_only=True)
     guarantor1_name = serializers.SerializerMethodField()
     guarantor2_name = serializers.SerializerMethodField()
     monthly_instalment = serializers.DecimalField(
