@@ -179,7 +179,7 @@ def export_period_report(data):
     ws1 = wb.active
     ws1.title = 'Summary Overview'
 
-    ws1.append(['KVVA Management System — Period Performance Report'])
+    ws1.append(['KVVES Management System — Period Performance Report'])
     ws1.append(['Report Period:', data.get('period', '').capitalize()])
     ws1.append(['Date Range:', f"{data.get('start')} to {data.get('end')}"])
     ws1.append(['Label:', data.get('label', '')])

@@ -1,0 +1,1 @@
+import{j as t}from"./index-CIE1znNA.js";import{T as i}from"./index-SFIni8IK.js";import{R as l}from"./WarningOutlined-CLIv-9sm.js";const c=({daysOverdue:e,isOverdue:n})=>{if(!n&&!e)return null;const r=e||0;let o="warning",s=`${r}d overdue`;return r>90?o="error":r>30&&(o="orange"),t.jsx(i,{color:o,icon:t.jsx(l,{}),style:{fontWeight:600},children:s})};export{c as O};
