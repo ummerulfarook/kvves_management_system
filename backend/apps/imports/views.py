@@ -256,3 +256,22 @@ class LoanReportExportView(APIView):
         )
         response['Content-Disposition'] = 'attachment; filename="loan_report.xlsx"'
         return response
+
+
+class WelfareCollectionExportView(APIView):
+    permission_classes = [IsAuthenticated]
+    def get(self, request):
+        from apps.reports.views import WelfareCollectionReportView
+        view = WelfareCollectionReportView()
+        view.request = request
+        res = view.get(request)
+        if res.status_code != 200:
+            return res
+        from .exporters import export_welfare_collection_report
+        excel_bytes = export_welfare_collection_report(res.data)
+        response = HttpResponse(
+            excel_bytes,
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = 'attachment; filename="welfare_collections_report.xlsx"'
+        return response

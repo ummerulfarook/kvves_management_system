@@ -175,10 +175,134 @@ def export_period_report(data):
     """Export period report (income/expense summaries) to Excel bytes."""
     wb = Workbook()
 
-    # Sheet 1: Summary Overview
-    ws1 = wb.active
-    ws1.title = 'Summary Overview'
+    # Sheet 1: Financial Summary Ledger (Audit-ready Kerala Cooperative Ledger)
+    ws_ledger = wb.active
+    ws_ledger.title = 'Financial Summary Ledger'
 
+    ws_ledger.append(['കേരള വ്യാപാരി വ്യവസായി ഏകോപന സമിതി (KVVES) — Azhikode Paybazar Unit'])
+    ws_ledger.append(['FINANCIAL SUMMARY & AUDIT STATEMENT'])
+    ws_ledger.append(['Report Period:', str(data.get('label', ''))])
+    ws_ledger.append(['Date Range:', f"{data.get('start')} to {data.get('end')}"])
+    ws_ledger.append([])
+
+    ws_ledger.append(['Sl No.', 'Particulars / Account Head', 'Income (₹)', 'Expense (₹)'])
+    style_header_row(ws_ledger, row_num=6)
+
+    # ─── PART I: INCOME ───
+    ws_ledger.append(['', 'PART I: INCOME / RECEIPTS (വരവ്)', '', ''])
+    part1_row = ws_ledger.max_row
+    ws_ledger.cell(row=part1_row, column=2).font = Font(bold=True, size=11)
+
+    sl = 1
+    # 1. Welfare collections
+    welfare_summary = data.get('welfare_summary_list', [])
+    total_welfare = float(data.get('welfare_collections') or 0)
+    if welfare_summary:
+        ws_ledger.append([sl, 'Welfare Scheme Collections (Total)', total_welfare, ''])
+        welfare_main_row = ws_ledger.max_row
+        ws_ledger.cell(row=welfare_main_row, column=2).font = Font(bold=True)
+        ws_ledger.cell(row=welfare_main_row, column=3).font = Font(bold=True)
+        sub_idx = 1
+        for wg in welfare_summary:
+            ws_ledger.append([
+                f"{sl}.{sub_idx}",
+                f"  • {wg.get('group_no')} ({wg.get('group_name')})",
+                float(wg.get('amount') or 0),
+                ''
+            ])
+            sub_idx += 1
+    else:
+        ws_ledger.append([sl, 'Welfare Scheme Collections', total_welfare, ''])
+    sl += 1
+
+    # 2. Loan Repayments
+    loan_repayments_val = float(data.get('loan_repayments') or 0)
+    ws_ledger.append([sl, 'Loan Repayments Received', loan_repayments_val, ''])
+    sl += 1
+
+    # 3. Loan Interest & Service Charges
+    loan_interest_val = float(data.get('loan_interest_received') or 0)
+    if loan_interest_val > 0:
+        ws_ledger.append([sl, 'Loan Interest & Service Charges Received', loan_interest_val, ''])
+        sl += 1
+
+    # 4. Masavari Collections
+    masavari_val = float(data.get('masavari_collected') or 0)
+    ws_ledger.append([sl, 'Masavari (Monthly Subscriptions) Collected', masavari_val, ''])
+    sl += 1
+
+    # 5. Deposits & Registration Fees
+    deposits_val = float(data.get('deposits_made') or 0)
+    ws_ledger.append([sl, 'Registration Fees & Share Capital Deposits', deposits_val, ''])
+    sl += 1
+
+    # 6. Other Profits & Surcharges
+    other_inc_val = float(data.get('other_incomes') or 0)
+    if other_inc_val > 0:
+        ws_ledger.append([sl, 'Welfare Surcharges, Grace Reductions & Other Profits', other_inc_val, ''])
+        sl += 1
+
+    # 7. Standard Dues
+    dues_val = float(data.get('dues_collected') or 0)
+    if dues_val > 0:
+        ws_ledger.append([sl, 'Standard Dues Collected', dues_val, ''])
+        sl += 1
+
+    # Total Income Row
+    total_income_val = float(data.get('total_inflow') or 0)
+    ws_ledger.append(['', 'TOTAL INCOME (ആകെ വരവ്)', total_income_val, ''])
+    tot_inc_row = ws_ledger.max_row
+    ws_ledger.cell(row=tot_inc_row, column=2).font = Font(bold=True)
+    ws_ledger.cell(row=tot_inc_row, column=3).font = Font(bold=True)
+    ws_ledger.append([])
+
+    # ─── PART II: EXPENSES ───
+    ws_ledger.append(['', 'PART II: EXPENSES / DISBURSEMENTS (ചെലവ്)', '', ''])
+    part2_row = ws_ledger.max_row
+    ws_ledger.cell(row=part2_row, column=2).font = Font(bold=True, size=11)
+
+    expenses_summary = data.get('expenses_summary_list', [])
+    exp_sl = 1
+    if expenses_summary:
+        for exp in expenses_summary:
+            ws_ledger.append([
+                exp_sl,
+                exp.get('category_name', 'Expense'),
+                '',
+                float(exp.get('amount') or 0)
+            ])
+            exp_sl += 1
+    else:
+        raw_expenses = data.get('expenses_list', [])
+        for exp in raw_expenses:
+            cat_name = str(exp.get('category', 'Expense')).replace('_', ' ').title()
+            ws_ledger.append([
+                exp_sl,
+                f"{cat_name} ({exp.get('description', '')})",
+                '',
+                float(exp.get('amount') or 0)
+            ])
+            exp_sl += 1
+
+    # Total Expenses Row
+    total_expense_val = float(data.get('total_expenses') or 0)
+    ws_ledger.append(['', 'TOTAL EXPENSES (ആകെ ചെലവ്)', '', total_expense_val])
+    tot_exp_row = ws_ledger.max_row
+    ws_ledger.cell(row=tot_exp_row, column=2).font = Font(bold=True)
+    ws_ledger.cell(row=tot_exp_row, column=4).font = Font(bold=True)
+    ws_ledger.append([])
+
+    # ─── NET BALANCE / SURPLUS ───
+    net_bal = total_income_val - total_expense_val
+    ws_ledger.append(['', 'NET BALANCE / SURPLUS (നീക്കിയിരിപ്പ്)', net_bal, ''])
+    net_row = ws_ledger.max_row
+    ws_ledger.cell(row=net_row, column=2).font = Font(bold=True, size=12)
+    ws_ledger.cell(row=net_row, column=3).font = Font(bold=True, size=12)
+
+    auto_column_width(ws_ledger)
+
+    # Sheet 2: Summary Overview Metrics
+    ws1 = wb.create_sheet('Overview Metrics')
     ws1.append(['KVVES Management System — Period Performance Report'])
     ws1.append(['Report Period:', data.get('period', '').capitalize()])
     ws1.append(['Date Range:', f"{data.get('start')} to {data.get('end')}"])
@@ -209,7 +333,7 @@ def export_period_report(data):
     ws1['A1'].font = Font(size=14, bold=True)
     style_header_row(ws1, row_num=6)
 
-    # Sheet 2: New Members List
+    # Sheet 3: New Members List
     new_members = data.get('new_members_list', [])
     if new_members:
         ws2 = wb.create_sheet('New Members')
@@ -222,7 +346,7 @@ def export_period_report(data):
             ])
         auto_column_width(ws2)
 
-    # Sheet 3: Welfare Winners & Payouts List
+    # Sheet 4: Welfare Winners & Payouts List
     welfare_winners = data.get('welfare_winners_list', [])
     if welfare_winners:
         ws_w = wb.create_sheet('Welfare Payouts')
@@ -236,8 +360,6 @@ def export_period_report(data):
             name = w.get('member__full_name') or w.get('non_member_name')
             member_no = w.get('member__member_no')
             recipient = f"{name} ({member_no})" if member_no else name
-            
-            # Format payout_payment_mode nicely (e.g. cheque -> Cheque)
             pm = w.get('payout_payment_mode', 'cash')
             pm_display = pm.replace('_', ' ').title() if pm else 'Cash'
             
@@ -298,3 +420,46 @@ def export_loan_report(data_list):
     output = BytesIO()
     wb.save(output)
     return output.getvalue()
+
+
+def export_welfare_collection_report(data):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Welfare Collections'
+    ws.append(['കേരള വ്യാപാരി വ്യവസായി ഏകോപന സമിതി (KVVES) — Azhikode Paybazar Unit'])
+    ws.append(['WELFARE SCHEME TOTAL COLLECTIONS REPORT'])
+    ws.append([])
+
+    ws.append(['Sl No.', 'Welfare Name', 'Welfare Number', 'Total Members', 'Months Completed', 'Total Amount Collected (₹)', 'Status'])
+    style_header_row(ws, row_num=4)
+
+    results = data.get('results', [])
+    for idx, item in enumerate(results, start=1):
+        ws.append([
+            idx,
+            item.get('group_name'),
+            item.get('group_no'),
+            item.get('total_members', 0),
+            f"{item.get('months_completed', 0)} / {item.get('duration_months', 0)}",
+            float(item.get('total_collected') or 0),
+            item.get('status_display', str(item.get('status', '')).capitalize())
+        ])
+
+    # Grand total row
+    ws.append([
+        '', 'Grand Total', '',
+        data.get('grand_total_members', 0),
+        '',
+        float(data.get('grand_total_collected') or 0),
+        ''
+    ])
+    total_row = ws.max_row
+    ws.cell(row=total_row, column=2).font = Font(bold=True)
+    ws.cell(row=total_row, column=4).font = Font(bold=True)
+    ws.cell(row=total_row, column=6).font = Font(bold=True)
+
+    auto_column_width(ws)
+    output = BytesIO()
+    wb.save(output)
+    return output.getvalue()
+

@@ -13,5 +13,6 @@ urlpatterns = [
     path('export/overdue/', views.OverdueExportView.as_view(), name='export-overdue'),
     path('export/report/', views.PeriodReportExportView.as_view(), name='export-report'),
     path('export/welfare-report/', views.WelfareReportExportView.as_view(), name='export-welfare-report'),
+    path('export/welfare-collections/', views.WelfareCollectionExportView.as_view(), name='export-welfare-collections'),
     path('export/loan-report/', views.LoanReportExportView.as_view(), name='export-loan-report'),
 ]

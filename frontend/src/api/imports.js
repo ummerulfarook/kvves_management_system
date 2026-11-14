@@ -24,6 +24,9 @@ export const exportPeriodReport = (params) =>
 export const exportWelfareReport = (params) =>
   api.get('/export/welfare-report/', { params, responseType: 'blob' })
 
+export const exportWelfareCollectionReport = (params) =>
+  api.get('/export/welfare-collections/', { params, responseType: 'blob' })
+
 export const exportLoanReport = (params) =>
   api.get('/export/loan-report/', { params, responseType: 'blob' })
 

@@ -694,6 +694,48 @@ class PeriodReportView(APIView):
         # Total inflow
         total_inflow = welfare_collections + loan_repayments + dues_collected + deposits_made + masavari_collected + other_incomes
 
+        # Welfare collections grouped by welfare scheme for Overall Summary
+        welfare_by_group_dict = {}
+        for item in welfare_collections_list:
+            gname = item.get('enrollment__chit_group__group_name') or 'Welfare Scheme'
+            gno = item.get('enrollment__chit_group__group_no') or ''
+            k = (gno, gname)
+            amt = Decimal(str(item.get('amount_paid') or 0))
+            welfare_by_group_dict[k] = welfare_by_group_dict.get(k, Decimal('0.00')) + amt
+
+        welfare_summary_list = [
+            {'group_no': k[0], 'group_name': k[1], 'amount': str(v)}
+            for k, v in sorted(welfare_by_group_dict.items(), key=lambda x: str(x[0][0]))
+        ]
+
+        # Group expenses by category for Overall Summary
+        expense_categories_dict = dict(DailyEntry.CATEGORIES)
+        expenses_grouped = list(DailyEntry.objects.filter(
+            entry_type='expense', date__gte=start, date__lte=end
+        ).values('category').annotate(total=Sum('amount')).order_by('-total'))
+        expenses_summary_list = []
+        for eg in expenses_grouped:
+            cat_key = eg['category']
+            cat_label = expense_categories_dict.get(cat_key, cat_key.replace('_', ' ').title())
+            expenses_summary_list.append({
+                'category': cat_key,
+                'category_name': cat_label,
+                'amount': str(eg['total']),
+            })
+
+        # Loan interest & service charges
+        loan_interest_lr = LoanRepayment.objects.filter(
+            is_paid=True
+        ).filter(
+            models.Q(paid_date__gte=start, paid_date__lte=end) |
+            models.Q(paid_date__isnull=True, due_date__gte=start, due_date__lte=end)
+        ).aggregate(total=Sum('interest_paid'))['total'] or Decimal('0.00')
+
+        loan_service_charges = DailyEntry.objects.filter(
+            category='loan_service_charge', entry_type='income', date__gte=start, date__lte=end
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+        loan_interest_received = loan_interest_lr + loan_service_charges
+
         return Response({
             'period': period,
             'label': label,
@@ -702,9 +744,11 @@ class PeriodReportView(APIView):
             'welfare_collections': str(welfare_collections),
             'welfare_count': welfare_count,
             'welfare_list': welfare_collections_list,
+            'welfare_summary_list': welfare_summary_list,
             'loan_repayments': str(loan_repayments),
             'loan_repayment_count': loan_repayment_count,
             'loan_list': loan_repayments_list,
+            'loan_interest_received': str(loan_interest_received),
             'dues_collected': str(dues_collected),
             'dues_list': dues_list,
             'masavari_collected': str(masavari_collected),
@@ -717,6 +761,7 @@ class PeriodReportView(APIView):
             'other_incomes_list': other_incomes_list,
             'welfare_winners_list': welfare_winners_list,
             'expenses_list': expenses_list,
+            'expenses_summary_list': expenses_summary_list,
             'total_expenses': str(total_expenses),
             'total_inflow': str(total_inflow),
             'new_members': new_members,
@@ -874,4 +919,135 @@ class LoanRepaymentsReportView(APIView):
             })
             
         return Response({'results': data})
+
+
+class WelfareCollectionReportView(APIView):
+    """
+    GET /api/reports/welfare-collections/
+    Returns summary of total collections for each welfare scheme, along with month-by-month breakdown.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from apps.chits.models import ChitGroup, ChitPayment
+        from django.db.models import Sum, Q
+        from decimal import Decimal
+        import datetime
+
+        status_param = request.query_params.get('status', 'all').lower()
+        start_date_str = request.query_params.get('start_date')
+        end_date_str = request.query_params.get('end_date')
+
+        start_date = None
+        end_date = None
+        if start_date_str:
+            try:
+                start_date = datetime.date.fromisoformat(start_date_str)
+            except (ValueError, TypeError):
+                start_date = None
+        if end_date_str:
+            try:
+                end_date = datetime.date.fromisoformat(end_date_str)
+            except (ValueError, TypeError):
+                end_date = None
+
+        qs = ChitGroup.objects.all().order_by('-start_date')
+        if status_param and status_param != 'all':
+            qs = qs.filter(status=status_param)
+
+        results = []
+        grand_total_collected = Decimal('0.00')
+        grand_total_members = 0
+
+        for group in qs:
+            total_members = group.enrollments.count()
+            grand_total_members += total_members
+
+            payment_filter = Q(enrollment__chit_group=group, is_paid=True)
+            if start_date:
+                payment_filter &= (Q(paid_date__gte=start_date) | Q(paid_date__isnull=True, due_date__gte=start_date))
+            if end_date:
+                payment_filter &= (Q(paid_date__lte=end_date) | Q(paid_date__isnull=True, due_date__lte=end_date))
+
+            collected = ChitPayment.objects.filter(payment_filter).aggregate(
+                total=Sum('amount_paid')
+            )['total'] or Decimal('0.00')
+            grand_total_collected += collected
+
+            if group.status == 'completed':
+                months_completed = group.duration_months
+            elif group.status == 'upcoming':
+                months_completed = 0
+            else:
+                completed_auctions = group.auctions.filter(is_completed=True).count()
+                months_completed = max(completed_auctions, min(group.duration_months, max(0, group.current_month - 1)))
+
+            monthly_breakdown = []
+            auctions_by_month = {a.month_number: a for a in group.auctions.all()}
+
+            for m in range(1, group.duration_months + 1):
+                month_pmts = ChitPayment.objects.filter(enrollment__chit_group=group, month_number=m)
+                paid_pmts = month_pmts.filter(is_paid=True)
+                if start_date:
+                    paid_pmts = paid_pmts.filter(Q(paid_date__gte=start_date) | Q(paid_date__isnull=True, due_date__gte=start_date))
+                if end_date:
+                    paid_pmts = paid_pmts.filter(Q(paid_date__lte=end_date) | Q(paid_date__isnull=True, due_date__lte=end_date))
+
+                paid_count = paid_pmts.count()
+                month_collected = paid_pmts.aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
+                unpaid_count = max(0, total_members - paid_count)
+                auction = auctions_by_month.get(m)
+                inst_amount = auction.installment_amount if auction else group.monthly_instalment
+
+                monthly_breakdown.append({
+                    'month_number': m,
+                    'installment_amount': str(inst_amount),
+                    'instalment_amount': str(inst_amount),
+                    'paid_members_count': paid_count,
+                    'members_paid': paid_count,
+                    'unpaid_members_count': unpaid_count,
+                    'members_not_paid': unpaid_count,
+                    'total_collected': str(month_collected),
+                    'is_completed': m <= months_completed,
+                })
+
+            results.append({
+                'id': group.id,
+                'group_name': group.group_name,
+                'welfare_name': group.group_name,
+                'group_no': group.group_no,
+                'welfare_number': group.group_no,
+                'total_members': total_members,
+                'enrolled_count': group.enrolled_count,
+                'duration_months': group.duration_months,
+                'current_month': group.current_month,
+                'months_completed': months_completed,
+                'status': group.status,
+                'status_display': group.get_status_display(),
+                'monthly_instalment': str(group.monthly_instalment),
+                'chit_value': str(group.chit_value),
+                'total_collected': str(collected),
+                'total_amount_collected': str(collected),
+                'start_date': group.start_date.isoformat() if group.start_date else None,
+                'end_date': group.end_date.isoformat() if group.end_date else None,
+                'monthly_breakdown': monthly_breakdown,
+            })
+
+        summary = {
+            'total_welfares': len(results),
+            'total_members': grand_total_members,
+            'grand_total_collected': float(grand_total_collected),
+            'active_welfares': sum(1 for r in results if r['status'] == 'active'),
+            'completed_welfares': sum(1 for r in results if r['status'] == 'completed'),
+            'upcoming_welfares': sum(1 for r in results if r['status'] == 'upcoming'),
+        }
+
+        return Response({
+            'summary': summary,
+            'results': results,
+            'grand_total_collected': str(grand_total_collected),
+            'grand_total_members': grand_total_members,
+            'total_welfares_count': len(results),
+        })
+
 

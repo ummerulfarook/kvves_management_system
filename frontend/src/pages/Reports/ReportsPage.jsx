@@ -8,7 +8,8 @@ import {
   TeamOutlined, BankOutlined, CreditCardOutlined, WarningOutlined,
   CalendarOutlined, SafetyOutlined, DollarOutlined, ArrowUpOutlined,
   PrinterOutlined, DownloadOutlined, FileExcelOutlined, FilePdfOutlined,
-  TrophyOutlined, InfoCircleOutlined, CheckCircleOutlined,
+  TrophyOutlined, InfoCircleOutlined, CheckCircleOutlined, EyeOutlined,
+  AppstoreOutlined, FileTextOutlined,
 } from '@ant-design/icons'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -20,7 +21,7 @@ import autoTable from 'jspdf-autotable'
 import * as reportsApi from '../../api/reports'
 import * as membersApi from '../../api/members'
 import * as chitsApi from '../../api/chits'
-import { exportOverdue, exportPeriodReport, downloadBlob, exportWelfareReport, exportLoanReport } from '../../api/imports'
+import { exportOverdue, exportPeriodReport, downloadBlob, exportWelfareReport, exportLoanReport, exportWelfareCollectionReport } from '../../api/imports'
 import { formatCurrency, formatDate } from '../../utils/formatters'
 import ExportButton from '../../components/ExportButton'
 import StatusBadge from '../../components/StatusBadge'
@@ -40,6 +41,7 @@ const PeriodReport = () => {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(false)
   const [downloading, setDownloading] = useState(false)
+  const [viewMode, setViewMode] = useState('detailed') // 'detailed' | 'summary'
 
   const handleDownload = async () => {
     setDownloading(true)
@@ -90,6 +92,483 @@ const PeriodReport = () => {
   useEffect(() => {
     fetchReport()
   }, [fetchReport])
+
+  const handlePrint = () => {
+    if (!data) return
+    const printWindow = window.open('', '_blank')
+    if (!printWindow) {
+      window.print()
+      return
+    }
+
+    const dateLabel = dayjs().format('DD/MM/YYYY hh:mm A')
+    const totalIncome = parseFloat(data.total_inflow || 0)
+    const totalExpenses = parseFloat(data.total_expenses || 0)
+    const netBalance = totalIncome - totalExpenses
+    const welfareSummary = data.welfare_summary_list || []
+    const expensesSummary = data.expenses_summary_list || []
+
+    if (viewMode === 'summary') {
+      // ─── PRINT SUMMARY VIEW (Kerala Cooperative Audit Ledger) ───
+      let welfareRows = ''
+      if (welfareSummary.length > 0) {
+        welfareRows = welfareSummary.map((w, idx) => `
+          <tr>
+            <td style="text-align: center;">1.${idx + 1}</td>
+            <td style="padding-left: 20px;">Welfare Fund: <strong>${w.group_no}</strong> — ${w.group_name} (${w.count} payments received)</td>
+            <td style="text-align: right;">${parseFloat(w.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+            <td style="text-align: right; color: #888;">—</td>
+          </tr>
+        `).join('')
+        welfareRows += `
+          <tr style="background-color: #f8fafc; font-weight: 600;">
+            <td></td>
+            <td style="padding-left: 20px;"><em>Subtotal — Total Welfare Collections</em></td>
+            <td style="text-align: right;">₹${parseFloat(data.welfare_collections || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+            <td style="text-align: right; color: #888;">—</td>
+          </tr>
+        `
+      } else {
+        welfareRows = `
+          <tr>
+            <td style="text-align: center;">1</td>
+            <td>Welfare Fund Collections (${data.welfare_count || 0} payments)</td>
+            <td style="text-align: right;">${parseFloat(data.welfare_collections || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+            <td style="text-align: right; color: #888;">—</td>
+          </tr>
+        `
+      }
+
+      let extraIncomeRows = ''
+      if (parseFloat(data.loan_interest_received || 0) > 0) {
+        extraIncomeRows += `
+          <tr>
+            <td style="text-align: center;">3</td>
+            <td>Loan Service Charges &amp; Interest Received</td>
+            <td style="text-align: right;">${parseFloat(data.loan_interest_received || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+            <td style="text-align: right; color: #888;">—</td>
+          </tr>
+        `
+      }
+      if (parseFloat(data.dues_collected || 0) > 0) {
+        extraIncomeRows += `
+          <tr>
+            <td style="text-align: center;">7</td>
+            <td>Standard Dues Collected</td>
+            <td style="text-align: right;">${parseFloat(data.dues_collected || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+            <td style="text-align: right; color: #888;">—</td>
+          </tr>
+        `
+      }
+
+      let expenseRows = ''
+      if (expensesSummary.length > 0) {
+        expenseRows = expensesSummary.map((e, idx) => `
+          <tr>
+            <td style="text-align: center;">${idx + 1}</td>
+            <td style="padding-left: 20px; text-transform: capitalize;">Office Expense: <strong>${e.category.replace(/_/g, ' ')}</strong> (${e.count} vouchers)</td>
+            <td style="text-align: right; color: #888;">—</td>
+            <td style="text-align: right;">${parseFloat(e.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+          </tr>
+        `).join('')
+      } else {
+        expenseRows = `
+          <tr>
+            <td style="text-align: center;">1</td>
+            <td style="padding-left: 20px; font-style: italic; color: #888;">No office expenses recorded for this period</td>
+            <td style="text-align: right; color: #888;">—</td>
+            <td style="text-align: right;">0.00</td>
+          </tr>
+        `
+      }
+
+      printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>Financial Summary Statement — ${data.label}</title>
+            <style>
+              @page { size: A4 portrait; margin: 12mm 10mm 15mm 10mm; }
+              * { box-sizing: border-box; }
+              body { font-family: Arial, "Times New Roman", sans-serif; color: #000; margin: 0; padding: 15px; font-size: 10pt; line-height: 1.4; }
+              .header-org { text-align: center; margin-bottom: 16px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+              h1 { font-size: 15pt; margin: 0 0 4px 0; color: #000; font-family: 'Noto Sans Malayalam', Arial, sans-serif; }
+              .unit-sub { font-size: 11pt; color: #333; font-weight: 600; margin-bottom: 4px; }
+              .rep-title { font-size: 13pt; font-weight: 700; color: #000; text-transform: uppercase; letter-spacing: 0.5px; }
+              .meta-grid { display: flex; justify-content: space-between; margin: 10px 0 16px 0; font-size: 9pt; border-bottom: 1px solid #ccc; padding-bottom: 6px; }
+              table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 10pt; border: 1px solid #000; }
+              th, td { border: 1px solid #000; padding: 6px 8px; }
+              th { background-color: #f1f5f9; font-weight: bold; color: #000; }
+              tr { page-break-inside: avoid; }
+              thead { display: table-header-group; }
+              .section-hdr { background-color: #e2e8f0; font-weight: bold; }
+              .total-row { font-weight: bold; background-color: #e2e8f0 !important; }
+              .net-row { font-weight: bold; background-color: #f1f5f9 !important; font-size: 11pt; }
+              .sign-grid { display: flex; justify-content: space-between; margin-top: 40px; padding: 0 20px; }
+              .sign-box { text-align: center; border-top: 1px solid #000; width: 160px; padding-top: 6px; font-weight: 600; font-size: 9.5pt; }
+            </style>
+          </head>
+          <body>
+            <div class="header-org">
+              <h1>കേരള വ്യാപാരി വ്യവസായി ഏകോപന സമിതി</h1>
+              <div class="unit-sub">Azhikode Paybazar Unit (Reg No. 262/81)</div>
+              <div class="rep-title">FINANCIAL SUMMARY STATEMENT (AUDIT LEDGER)</div>
+            </div>
+            <div class="meta-grid">
+              <div><strong>Report Period:</strong> ${data.label} (${data.start} to ${data.end})</div>
+              <div><strong>Generated On:</strong> ${dateLabel}</div>
+              <div><strong>Accounting Standard:</strong> Kerala Cooperative Ledger</div>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 50px; text-align: center;">Sl No.</th>
+                  <th>Particulars / Account Head (വിവരണം)</th>
+                  <th style="width: 160px; text-align: right;">Income / വരവ് (₹)</th>
+                  <th style="width: 160px; text-align: right;">Expense / ചെലവ് (₹)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="section-hdr">
+                  <td style="text-align: center;">I</td>
+                  <td colspan="3">RECEIPTS &amp; INCOME (വരവ് ഇനങ്ങൾ)</td>
+                </tr>
+                ${welfareRows}
+                <tr>
+                  <td style="text-align: center;">2</td>
+                  <td>Loan Repayments / EMI Principal Collections (${data.loan_repayment_count || 0} installments)</td>
+                  <td style="text-align: right;">${parseFloat(data.loan_repayments || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                  <td style="text-align: right; color: #888;">—</td>
+                </tr>
+                ${extraIncomeRows}
+                <tr>
+                  <td style="text-align: center;">4</td>
+                  <td>Masavari (Membership Subscription) Collections (${data.masavari_count || 0} payments)</td>
+                  <td style="text-align: right;">${parseFloat(data.masavari_collected || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                  <td style="text-align: right; color: #888;">—</td>
+                </tr>
+                <tr>
+                  <td style="text-align: center;">5</td>
+                  <td>Member Registration Fees &amp; Share Capital Deposits (${(data.deposits_list || []).length} items)</td>
+                  <td style="text-align: right;">${parseFloat(data.deposits_made || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                  <td style="text-align: right; color: #888;">—</td>
+                </tr>
+                <tr>
+                  <td style="text-align: center;">6</td>
+                  <td>Welfare Auction Surcharges &amp; Miscellaneous Profits (${data.other_incomes_count || 0} items)</td>
+                  <td style="text-align: right;">${parseFloat(data.other_incomes || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                  <td style="text-align: right; color: #888;">—</td>
+                </tr>
+                <tr class="total-row">
+                  <td style="text-align: center;">—</td>
+                  <td>TOTAL RECEIPTS &amp; INCOME (ആകെ വരവ്)</td>
+                  <td style="text-align: right;">₹${totalIncome.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                  <td style="text-align: right; color: #888;">—</td>
+                </tr>
+                <tr class="section-hdr">
+                  <td style="text-align: center;">II</td>
+                  <td colspan="3">PAYMENTS &amp; EXPENSES (ചെലവ് ഇനങ്ങൾ)</td>
+                </tr>
+                ${expenseRows}
+                <tr class="total-row">
+                  <td style="text-align: center;">—</td>
+                  <td>TOTAL PAYMENTS &amp; EXPENSES (ആകെ ചെലവ്)</td>
+                  <td style="text-align: right; color: #888;">—</td>
+                  <td style="text-align: right;">₹${totalExpenses.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                </tr>
+                <tr class="net-row">
+                  <td style="text-align: center;">★</td>
+                  <td>NET BALANCE / SURPLUS (വരവ് - ചെലവ് നീക്കിയിരിപ്പ്)</td>
+                  <td colspan="2" style="text-align: right;">₹${netBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="sign-grid">
+              <div class="sign-box">Prepared By (Accountant)</div>
+              <div class="sign-box">General Secretary</div>
+              <div class="sign-box">President</div>
+            </div>
+            <script>
+              window.onload = function() { window.print(); }
+            </script>
+          </body>
+        </html>
+      `)
+      printWindow.document.close()
+    } else {
+      // ─── PRINT DETAILED VIEW (Formal Kerala Cooperative Format) ───
+      printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>Detailed Financial Report — ${data.label}</title>
+            <style>
+              @page { size: A4 portrait; margin: 12mm 10mm 15mm 10mm; }
+              * { box-sizing: border-box; }
+              body { font-family: Arial, "Times New Roman", sans-serif; color: #000; margin: 0; padding: 15px; font-size: 10pt; line-height: 1.4; }
+              .header-org { text-align: center; margin-bottom: 16px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+              h1 { font-size: 15pt; margin: 0 0 4px 0; color: #000; font-family: 'Noto Sans Malayalam', Arial, sans-serif; }
+              .unit-sub { font-size: 11pt; color: #333; font-weight: 600; margin-bottom: 4px; }
+              .rep-title { font-size: 13pt; font-weight: 700; color: #000; text-transform: uppercase; letter-spacing: 0.5px; }
+              .meta-grid { display: flex; justify-content: space-between; margin: 10px 0 16px 0; font-size: 9pt; border-bottom: 1px solid #ccc; padding-bottom: 6px; }
+              .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 18px; }
+              .summary-card { background: #f8fafc; border: 1px solid #000; padding: 8px; text-align: center; }
+              .summary-card .label { font-size: 8.5pt; text-transform: uppercase; color: #444; font-weight: 600; }
+              .summary-card .value { font-size: 12pt; font-weight: 700; color: #000; margin-top: 3px; }
+              h2 { font-size: 11.5pt; margin: 18px 0 6px; color: #000; border-bottom: 1px solid #000; padding-bottom: 3px; }
+              table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 9pt; border: 1px solid #000; }
+              th, td { border: 1px solid #000; padding: 5px 7px; text-align: left; }
+              th { background-color: #f1f5f9; color: #000; font-weight: bold; }
+              tr { page-break-inside: avoid; }
+              thead { display: table-header-group; }
+              .sign-grid { display: flex; justify-content: space-between; margin-top: 40px; padding: 0 20px; }
+              .sign-box { text-align: center; border-top: 1px solid #000; width: 160px; padding-top: 6px; font-weight: 600; font-size: 9.5pt; }
+            </style>
+          </head>
+          <body>
+            <div class="header-org">
+              <h1>കേരള വ്യാപാരി വ്യവസായി ഏകോപന സമിതി</h1>
+              <div class="unit-sub">Azhikode Paybazar Unit (Reg No. 262/81)</div>
+              <div class="rep-title">FINANCIAL PERIOD DETAILED REPORT</div>
+            </div>
+            <div class="meta-grid">
+              <div><strong>Report Period:</strong> ${data.label} (${data.start} to ${data.end})</div>
+              <div><strong>Generated On:</strong> ${dateLabel}</div>
+              <div><strong>Total Inflow:</strong> ₹${totalIncome.toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
+            </div>
+            
+            <div class="summary-grid">
+              <div class="summary-card">
+                <div class="label">Total Inflow</div>
+                <div class="value">₹${totalIncome.toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
+              </div>
+              <div class="summary-card">
+                <div class="label">Welfare Collections</div>
+                <div class="value">₹${parseFloat(data.welfare_collections).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
+              </div>
+              <div class="summary-card">
+                <div class="label">Loan Repayments</div>
+                <div class="value">₹${parseFloat(data.loan_repayments).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
+              </div>
+              <div class="summary-card">
+                <div class="label">Masavari Collections</div>
+                <div class="value">₹${parseFloat(data.masavari_collected).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
+              </div>
+              <div class="summary-card">
+                <div class="label">Registration Fees</div>
+                <div class="value">₹${parseFloat(data.deposits_made).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
+              </div>
+              <div class="summary-card">
+                <div class="label">Other Profits</div>
+                <div class="value">₹${parseFloat(data.other_incomes || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
+              </div>
+              <div class="summary-card">
+                <div class="label">Total Expenses</div>
+                <div class="value">₹${totalExpenses.toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
+              </div>
+              <div class="summary-card">
+                <div class="label">Net Balance</div>
+                <div class="value">₹${netBalance.toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
+              </div>
+            </div>
+      `)
+
+      if (data.new_members_list && data.new_members_list.length > 0) {
+        printWindow.document.write(`
+          <h2>1. New Members Registered (${data.new_members})</h2>
+          <table>
+            <thead>
+              <tr><th>Member No</th><th>Full Name</th><th>Joining Date</th><th>Type</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+              ${data.new_members_list.map(m => `
+                <tr><td>${m.member_no}</td><td>${m.full_name}</td><td>${m.joining_date}</td><td>${m.membership_type}</td><td>${m.status}</td></tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `)
+      }
+
+      if (data.welfare_list && data.welfare_list.length > 0) {
+        printWindow.document.write(`
+          <h2>2. Welfare Installments Collected (${data.welfare_list.length})</h2>
+          <table>
+            <thead>
+              <tr><th>#</th><th>Member / Non-Member</th><th>Welfare Scheme</th><th>Month</th><th style="text-align: right;">Amount (₹)</th><th>Paid Date</th><th>Receipt</th></tr>
+            </thead>
+            <tbody>
+              ${data.welfare_list.map((w, idx) => `
+                <tr>
+                  <td style="text-align: center;">${idx + 1}</td>
+                  <td>${w.enrollment__member__full_name || w.enrollment__non_member_name} (${w.enrollment__member__member_no || 'Non-Member'})</td>
+                  <td>${w.enrollment__chit_group__group_name}</td>
+                  <td style="text-align: center;">M ${w.month_number}</td>
+                  <td style="text-align: right;">${parseFloat(w.amount_paid).toFixed(2)}</td>
+                  <td>${w.paid_date}</td>
+                  <td>${w.receipt_no || '—'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `)
+      }
+
+      if (data.loan_list && data.loan_list.length > 0) {
+        printWindow.document.write(`
+          <h2>3. Loan Repayments / EMIs Collected (${data.loan_list.length})</h2>
+          <table>
+            <thead>
+              <tr><th>#</th><th>Member</th><th>Loan No</th><th>EMI #</th><th style="text-align: right;">Principal (₹)</th><th style="text-align: right;">Service Charge (₹)</th><th style="text-align: right;">Total Paid (₹)</th><th>Paid Date</th></tr>
+            </thead>
+            <tbody>
+              ${data.loan_list.map((l, idx) => `
+                <tr>
+                  <td style="text-align: center;">${idx + 1}</td>
+                  <td>${l.loan__member__full_name} (${l.loan__member__member_no})</td>
+                  <td>${l.loan__loan_no}</td>
+                  <td style="text-align: center;">${l.instalment_no}</td>
+                  <td style="text-align: right;">${parseFloat(l.principal_paid).toFixed(2)}</td>
+                  <td style="text-align: right;">${parseFloat(l.interest_paid).toFixed(2)}</td>
+                  <td style="text-align: right; font-weight: bold;">${parseFloat(l.amount_paid).toFixed(2)}</td>
+                  <td>${l.paid_date}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `)
+      }
+
+      if (data.masavari_list && data.masavari_list.length > 0) {
+        printWindow.document.write(`
+          <h2>4. Masavari (Membership) Payments (${data.masavari_list.length})</h2>
+          <table>
+            <thead>
+              <tr><th>#</th><th>Member</th><th>Period</th><th style="text-align: right;">Amount (₹)</th><th>Paid Date</th><th>Receipt No</th></tr>
+            </thead>
+            <tbody>
+              ${data.masavari_list.map((m, idx) => `
+                <tr>
+                  <td style="text-align: center;">${idx + 1}</td>
+                  <td>${m.member__full_name} (${m.member__member_no})</td>
+                  <td>Month ${m.month}/${m.year}</td>
+                  <td style="text-align: right;">${parseFloat(m.amount).toFixed(2)}</td>
+                  <td>${m.paid_date}</td>
+                  <td>${m.receipt_no || '—'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `)
+      }
+
+      if (data.welfare_winners_list && data.welfare_winners_list.length > 0) {
+        printWindow.document.write(`
+          <h2>5. Welfare Winner Drawings &amp; Profits (${data.welfare_winners_list.length})</h2>
+          <table>
+            <thead>
+              <tr><th>#</th><th>Recipient</th><th>Scheme</th><th>Ticket</th><th style="text-align: right;">Prize (₹)</th><th style="text-align: right;">Surcharge (₹)</th><th>Draw Date</th><th>Payout</th></tr>
+            </thead>
+            <tbody>
+              ${data.welfare_winners_list.map((w, idx) => `
+                <tr>
+                  <td style="text-align: center;">${idx + 1}</td>
+                  <td>${w.member__full_name || w.non_member_name} (${w.member__member_no || 'Non-Member'})</td>
+                  <td>${w.chit_group__group_name}</td>
+                  <td>#${w.ticket_number}</td>
+                  <td style="text-align: right;">${parseFloat(w.prize_amount).toFixed(2)}</td>
+                  <td style="text-align: right;">${parseFloat(w.surcharge_amount).toFixed(2)}</td>
+                  <td>${w.prize_date}</td>
+                  <td>${w.received_date ? w.received_date : 'Pending'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `)
+      }
+
+      if (data.deposits_list && data.deposits_list.length > 0) {
+        printWindow.document.write(`
+          <h2>6. Registration Fees &amp; Share Capital Deposits (${data.deposits_list.length})</h2>
+          <table>
+            <thead>
+              <tr><th>#</th><th>Member</th><th>Deposit Type</th><th style="text-align: right;">Amount (₹)</th><th>Paid Date</th><th>Receipt No</th></tr>
+            </thead>
+            <tbody>
+              ${data.deposits_list.map((d, idx) => `
+                <tr>
+                  <td style="text-align: center;">${idx + 1}</td>
+                  <td>${d.member__full_name || '—'} (${d.member__member_no || '—'})</td>
+                  <td>${d.deposit_type === 'membership_fee' ? 'Registration Fee' : 'Share Capital'}</td>
+                  <td style="text-align: right;">${parseFloat(d.amount).toFixed(2)}</td>
+                  <td>${d.deposit_date}</td>
+                  <td>${d.receipt_no || '—'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `)
+      }
+
+      if (data.other_incomes_list && data.other_incomes_list.length > 0) {
+        printWindow.document.write(`
+          <h2>7. Other Profits &amp; Surcharges Collected (${data.other_incomes_list.length})</h2>
+          <table>
+            <thead>
+              <tr><th>#</th><th>Recipient</th><th>Category</th><th>Description</th><th style="text-align: right;">Amount (₹)</th><th>Date</th></tr>
+            </thead>
+            <tbody>
+              ${data.other_incomes_list.map((oi, idx) => `
+                <tr>
+                  <td style="text-align: center;">${idx + 1}</td>
+                  <td>${oi.member__full_name || '—'} (${oi.member__member_no || 'Non-Member'})</td>
+                  <td style="text-transform: capitalize;">${oi.category.replace(/_/g, ' ')}</td>
+                  <td>${oi.description || '—'}</td>
+                  <td style="text-align: right;">${parseFloat(oi.amount).toFixed(2)}</td>
+                  <td>${oi.date}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `)
+      }
+
+      if (data.expenses_list && data.expenses_list.length > 0) {
+        printWindow.document.write(`
+          <h2>8. Office Expenses Paid (${data.expenses_list.length})</h2>
+          <table>
+            <thead>
+              <tr><th>#</th><th>Category</th><th>Description</th><th style="text-align: right;">Amount (₹)</th><th>Date</th></tr>
+            </thead>
+            <tbody>
+              ${data.expenses_list.map((e, idx) => `
+                <tr>
+                  <td style="text-align: center;">${idx + 1}</td>
+                  <td style="text-transform: capitalize;">${e.category.replace(/_/g, ' ')}</td>
+                  <td>${e.description}</td>
+                  <td style="text-align: right;">${parseFloat(e.amount).toFixed(2)}</td>
+                  <td>${e.date}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `)
+      }
+
+      printWindow.document.write(`
+            <div class="sign-grid">
+              <div class="sign-box">Prepared By (Accountant)</div>
+              <div class="sign-box">General Secretary</div>
+              <div class="sign-box">President</div>
+            </div>
+            <script>
+              window.onload = function() { window.print(); }
+            </script>
+          </body>
+        </html>
+      `)
+      printWindow.document.close()
+    }
+  }
 
   const pickerType = period === 'daily' ? 'date' : period === 'monthly' ? 'month' : 'year'
 
@@ -166,6 +645,20 @@ const PeriodReport = () => {
 
   return (
     <div>
+      {/* Formal Header for browser print (Ctrl+P) */}
+      {data && (
+        <div className="print-only coop-print-header">
+          <div className="org-title">കേരള വ്യാപാരി വ്യവസായി ഏകോപന സമിതി</div>
+          <div className="unit-title">Azhikode Paybazar Unit (Reg No. 262/81)</div>
+          <div className="rep-title">
+            {viewMode === 'summary' ? 'FINANCIAL SUMMARY STATEMENT (AUDIT LEDGER)' : 'FINANCIAL PERIOD DETAILED REPORT'}
+          </div>
+          <div className="rep-meta">
+            Period: {data.label} ({data.start} to {data.end}) | Generated: {dayjs().format('DD/MM/YYYY hh:mm A')}
+          </div>
+        </div>
+      )}
+
       {/* Controls */}
       <Card style={{ marginBottom: 20, border: '1px solid #bfdbfe', background: '#eff6ff' }} bodyStyle={{ padding: '16px 20px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
@@ -210,6 +703,21 @@ const PeriodReport = () => {
           >
             Generate Report
           </Button>
+
+          {/* View toggle (Requirement 2) */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Text style={{ fontWeight: 600, color: '#1e40af', fontSize: 13 }}>View:</Text>
+            <Segmented
+              value={viewMode}
+              onChange={setViewMode}
+              options={[
+                { label: 'Detailed View', value: 'detailed', icon: <FileTextOutlined /> },
+                { label: 'Summary View (Ledger)', value: 'summary', icon: <AppstoreOutlined /> },
+              ]}
+              style={{ fontWeight: 600 }}
+            />
+          </div>
+
           {data && (
             <>
               <Button
@@ -222,267 +730,7 @@ const PeriodReport = () => {
               </Button>
               <Button
                 type="primary"
-                onClick={() => {
-                  if (!data) return
-                  const printWindow = window.open('', '_blank')
-                  printWindow.document.write(`
-                    <html>
-                      <head>
-                         <title>Report — ${data.label}</title>
-                        <style>
-                          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 30px; color: #1e293b; line-height: 1.5; }
-                          h1 { margin: 0 0 10px; color: #1e40af; font-size: 24px; }
-                          h2 { margin: 25px 0 10px; color: #334155; font-size: 16px; border-bottom: 2px solid #e2e8f0; padding-bottom: 5px; }
-                          .header { margin-bottom: 30px; text-align: center; border-bottom: 3px double #cbd5e1; padding-bottom: 15px; }
-                          .meta { font-size: 14px; color: #64748b; margin-top: 5px; }
-                          .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 30px; }
-                          .summary-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; }
-                          .summary-card .label { font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: 600; }
-                          .summary-card .value { font-size: 18px; font-weight: 700; color: #1e40af; margin-top: 4px; }
-                          table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }
-                          th, td { border: 1px solid #cbd5e1; padding: 8px 10px; text-align: left; }
-                          th { background: #f1f5f9; color: #334155; font-weight: 600; }
-                          tr:nth-child(even) { background: #f8fafc; }
-                        </style>
-                      </head>
-                      <body>
-                        <div class="header">
-                          <h1 style="font-family: 'Noto Sans Malayalam', sans-serif;">കേരള വ്യാപാരി വ്യവസായി ഏകോപന സമിതി Azhikode Paybazar Unit (Reg No. 262/81)</h1>
-                          <div style="font-weight: bold; font-size: 16px;">FINANCIAL PERIOD REPORT</div>
-                          <div class="meta">Report Period: ${data.label} (${data.start} to ${data.end})</div>
-                        </div>
-                        
-                        <div class="summary-grid">
-                          <div class="summary-card">
-                            <div class="label">Total Inflow</div>
-                            <div class="value">₹${parseFloat(data.total_inflow).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
-                          </div>
-                          <div class="summary-card">
-                            <div class="label">Welfare Collections</div>
-                            <div class="value">₹${parseFloat(data.welfare_collections).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
-                          </div>
-                          <div class="summary-card">
-                            <div class="label">Loan Repayments</div>
-                            <div class="value">₹${parseFloat(data.loan_repayments).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
-                          </div>
-                          <div class="summary-card">
-                            <div class="label">Masavari Collected</div>
-                            <div class="value">₹${parseFloat(data.masavari_collected).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
-                          </div>
-                          <div class="summary-card">
-                            <div class="label">Dues Collected</div>
-                            <div class="value">₹${parseFloat(data.dues_collected).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
-                          </div>
-                          <div class="summary-card">
-                            <div class="label">Registration Fees</div>
-                            <div class="value">₹${parseFloat(data.deposits_made).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
-                          </div>
-                          <div class="summary-card">
-                            <div class="label">Other Profits & Surcharges</div>
-                            <div class="value">₹${parseFloat(data.other_incomes || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
-                          </div>
-                          <div class="summary-card">
-                            <div class="label">Total Expenses</div>
-                            <div class="value">₹${parseFloat(data.total_expenses || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
-                          </div>
-                          <div class="summary-card">
-                            <div class="label">Net Balance</div>
-                            <div class="value">₹${(parseFloat(data.total_inflow) - parseFloat(data.total_expenses || 0)).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
-                          </div>
-                        </div>
-                  `)
-
-                  if (data.new_members_list && data.new_members_list.length > 0) {
-                    printWindow.document.write(`
-                      <h2>New Members Registered (${data.new_members})</h2>
-                      <table>
-                        <thead>
-                          <tr><th>Member No</th><th>Full Name</th><th>Joining Date</th><th>Type</th><th>Status</th></tr>
-                        </thead>
-                        <tbody>
-                          ${data.new_members_list.map(m => `
-                            <tr><td>${m.member_no}</td><td>${m.full_name}</td><td>${m.joining_date}</td><td>${m.membership_type}</td><td>${m.status}</td></tr>
-                          `).join('')}
-                        </tbody>
-                      </table>
-                    `)
-                  }
-
-                  if (data.welfare_list && data.welfare_list.length > 0) {
-                    printWindow.document.write(`
-                      <h2>Welfare Instalments Collected (${data.welfare_list.length})</h2>
-                      <table>
-                        <thead>
-                          <tr><th>Member / Non-Member</th><th>Welfare Scheme</th><th>Month #</th><th>Amount</th><th>Paid Date</th><th>Receipt</th></tr>
-                        </thead>
-                        <tbody>
-                          ${data.welfare_list.map(w => `
-                            <tr>
-                              <td>${w.enrollment__member__full_name || w.enrollment__non_member_name} (${w.enrollment__member__member_no || 'Non-Member'})</td>
-                              <td>${w.enrollment__chit_group__group_name}</td>
-                              <td>${w.month_number}</td>
-                              <td>₹${parseFloat(w.amount_paid).toFixed(2)}</td>
-                              <td>${w.paid_date}</td>
-                              <td>${w.receipt_no || '—'}</td>
-                            </tr>
-                          `).join('')}
-                        </tbody>
-                      </table>
-                    `)
-                  }
-
-                  if (data.loan_list && data.loan_list.length > 0) {
-                    printWindow.document.write(`
-                      <h2>Loan Repayments / EMIs Collected (${data.loan_list.length})</h2>
-                      <table>
-                        <thead>
-                          <tr><th>Member</th><th>Loan No</th><th>EMI #</th><th>Principal</th><th>Service Charge</th><th>Total Paid</th><th>Paid Date</th></tr>
-                        </thead>
-                        <tbody>
-                          ${data.loan_list.map(l => `
-                            <tr>
-                              <td>${l.loan__member__full_name} (${l.loan__member__member_no})</td>
-                              <td>${l.loan__loan_no}</td>
-                              <td>${l.instalment_no}</td>
-                              <td>₹${parseFloat(l.principal_paid).toFixed(2)}</td>
-                              <td>₹${parseFloat(l.interest_paid).toFixed(2)}</td>
-                              <td>₹${parseFloat(l.amount_paid).toFixed(2)}</td>
-                              <td>${l.paid_date}</td>
-                            </tr>
-                          `).join('')}
-                        </tbody>
-                      </table>
-                    `)
-                  }
-
-                  if (data.masavari_list && data.masavari_list.length > 0) {
-                    printWindow.document.write(`
-                      <h2>Masavari (Membership) Payments (${data.masavari_list.length})</h2>
-                      <table>
-                        <thead>
-                          <tr><th>Member</th><th>Period</th><th>Amount</th><th>Paid Date</th><th>Receipt No</th></tr>
-                        </thead>
-                        <tbody>
-                          ${data.masavari_list.map(m => `
-                            <tr>
-                              <td>${m.member__full_name} (${m.member__member_no})</td>
-                              <td>Month ${m.month}/${m.year}</td>
-                              <td>₹${parseFloat(m.amount).toFixed(2)}</td>
-                              <td>${m.paid_date}</td>
-                              <td>${m.receipt_no || '—'}</td>
-                            </tr>
-                          `).join('')}
-                        </tbody>
-                      </table>
-                    `)
-                  }
-
-                  if (data.welfare_winners_list && data.welfare_winners_list.length > 0) {
-                    printWindow.document.write(`
-                      <h2>Welfare Winners & profits (${data.welfare_winners_list.length})</h2>
-                      <table>
-                        <thead>
-                          <tr><th>Recipient</th><th>Scheme</th><th>Ticket #</th><th>Prize Amount</th><th>Surcharge (Profit)</th><th>Late Reduction</th><th>Draw Date</th><th>Payout Date</th><th>Payment Details</th></tr>
-                        </thead>
-                        <tbody>
-                          ${data.welfare_winners_list.map(w => {
-                            const pm = w.payout_payment_mode ? w.payout_payment_mode.replace('_', ' ').toUpperCase() : 'CASH';
-                            const chq = w.cheque_number ? `(${w.cheque_number})` : '';
-                            return `
-                              <tr>
-                                <td>${w.member__full_name || w.non_member_name} (${w.member__member_no || 'Non-Member'})</td>
-                                <td>${w.chit_group__group_name}</td>
-                                <td>${w.ticket_number}</td>
-                                <td>₹${parseFloat(w.prize_amount).toFixed(2)}</td>
-                                <td>₹${parseFloat(w.surcharge_amount).toFixed(2)}</td>
-                                <td>₹${parseFloat(w.reduction_amount).toFixed(2)}</td>
-                                <td>${w.prize_date}</td>
-                                <td>${w.received_date ? w.received_date : '<span style="color: #d97706; font-weight: bold;">Pending</span>'}</td>
-                                <td>${w.received_date ? `${pm} ${chq}` : '—'}</td>
-                              </tr>
-                            `;
-                          }).join('')}
-                        </tbody>
-                      </table>
-                    `)
-                  }
-
-                  if (data.deposits_list && data.deposits_list.length > 0) {
-                    printWindow.document.write(`
-                      <h2>Registration Fees & Share Capital Deposits (${data.deposits_list.length})</h2>
-                      <table>
-                        <thead>
-                          <tr><th>Member</th><th>Deposit Type</th><th>Amount</th><th>Paid Date</th><th>Receipt No</th></tr>
-                        </thead>
-                        <tbody>
-                          ${data.deposits_list.map(d => `
-                            <tr>
-                              <td>${d.member__full_name || '—'} (${d.member__member_no || '—'})</td>
-                              <td>${d.deposit_type === 'membership_fee' ? 'Registration Fee' : 'Share Capital'}</td>
-                              <td>₹${parseFloat(d.amount).toFixed(2)}</td>
-                              <td>${d.deposit_date}</td>
-                              <td>${d.receipt_no || '—'}</td>
-                            </tr>
-                          `).join('')}
-                        </tbody>
-                      </table>
-                    `)
-                  }
-
-                  if (data.other_incomes_list && data.other_incomes_list.length > 0) {
-                    printWindow.document.write(`
-                      <h2>Other Profits & Surcharges Collected (${data.other_incomes_list.length})</h2>
-                      <table>
-                        <thead>
-                          <tr><th>Recipient</th><th>Category</th><th>Description</th><th>Amount</th><th>Date</th><th>Mode</th></tr>
-                        </thead>
-                        <tbody>
-                          ${data.other_incomes_list.map(oi => `
-                            <tr>
-                              <td>${oi.member__full_name || '—'} (${oi.member__member_no || 'Non-Member'})</td>
-                              <td style="text-transform: capitalize;">${oi.category.replace(/_/g, ' ')}</td>
-                              <td>${oi.description || '—'}</td>
-                              <td>₹${parseFloat(oi.amount).toFixed(2)}</td>
-                              <td>${oi.date}</td>
-                              <td style="text-transform: capitalize;">${oi.payment_mode || 'cash'}</td>
-                            </tr>
-                          `).join('')}
-                        </tbody>
-                      </table>
-                    `)
-                  }
-
-                  if (data.expenses_list && data.expenses_list.length > 0) {
-                    printWindow.document.write(`
-                      <h2>Office Expenses Paid (${data.expenses_list.length})</h2>
-                      <table>
-                        <thead>
-                          <tr><th>Category</th><th>Description</th><th>Amount</th><th>Date</th></tr>
-                        </thead>
-                        <tbody>
-                          ${data.expenses_list.map(e => `
-                            <tr>
-                              <td style="text-transform: capitalize;">${e.category.replace(/_/g, ' ')}</td>
-                              <td>${e.description}</td>
-                              <td>₹${parseFloat(e.amount).toFixed(2)}</td>
-                              <td>${e.date}</td>
-                            </tr>
-                          `).join('')}
-                        </tbody>
-                      </table>
-                    `)
-                  }
-
-                  printWindow.document.write(`
-                      </body>
-                    </html>
-                  `)
-                  printWindow.document.close()
-                  printWindow.focus()
-                  setTimeout(() => {
-                    printWindow.print()
-                  }, 500)
-                }}
+                onClick={handlePrint}
                 style={{ background: '#10b981', borderColor: '#10b981' }}
               >
                 Print Report
@@ -500,45 +748,48 @@ const PeriodReport = () => {
           <Spin size="large" />
         </div>
       ) : data ? (
-        <>
-          {/* Summary Cards */}
-          <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-            {summaryCards.map((card) => (
-              <Col key={card.label} xs={24} sm={12} lg={8} xl={4}>
-                <Card
-                  bodyStyle={{ padding: '16px 18px' }}
-                  style={{
-                    border: `1px solid ${card.color}30`,
-                    background: card.bg,
-                    borderRadius: 12,
-                    boxShadow: `0 2px 12px ${card.color}15`,
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <div>
-                      <Text style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                        {card.label}
-                      </Text>
-                      <div style={{ fontSize: 20, fontWeight: 700, color: card.color, marginTop: 4 }}>
-                        {card.value}
+        viewMode === 'summary' ? (
+          <CooperativeSummaryLedger data={data} />
+        ) : (
+          <>
+            {/* Summary Cards */}
+            <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+              {summaryCards.map((card) => (
+                <Col key={card.label} xs={24} sm={12} lg={8} xl={4}>
+                  <Card
+                    bodyStyle={{ padding: '16px 18px' }}
+                    style={{
+                      border: `1px solid ${card.color}30`,
+                      background: card.bg,
+                      borderRadius: 12,
+                      boxShadow: `0 2px 12px ${card.color}15`,
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div>
+                        <Text style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                          {card.label}
+                        </Text>
+                        <div style={{ fontSize: 20, fontWeight: 700, color: card.color, marginTop: 4 }}>
+                          {card.value}
+                        </div>
+                        {card.sub && (
+                          <Text style={{ fontSize: 11, color: '#9ca3af' }}>{card.sub}</Text>
+                        )}
                       </div>
-                      {card.sub && (
-                        <Text style={{ fontSize: 11, color: '#9ca3af' }}>{card.sub}</Text>
-                      )}
+                      <div style={{
+                        width: 36, height: 36, borderRadius: 10,
+                        background: `${card.color}20`,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        color: card.color, fontSize: 16,
+                      }}>
+                        {card.icon}
+                      </div>
                     </div>
-                    <div style={{
-                      width: 36, height: 36, borderRadius: 10,
-                      background: `${card.color}20`,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      color: card.color, fontSize: 16,
-                    }}>
-                      {card.icon}
-                    </div>
-                  </div>
-                </Card>
-              </Col>
-            ))}
-          </Row>
+                  </Card>
+                </Col>
+              ))}
+            </Row>
 
           {/* New Members Table */}
           {data.new_members_list && data.new_members_list.length > 0 && (
@@ -728,11 +979,760 @@ const PeriodReport = () => {
             </Card>
           )}
         </>
+        )
       ) : (
         <div style={{ textAlign: 'center', padding: 60, color: '#9ca3af' }}>
           Select a period and click Generate Report
         </div>
       )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────
+// Kerala Cooperative Summary Ledger sub-component (Requirement 2)
+// ─────────────────────────────────────────────────────────────
+const CooperativeSummaryLedger = ({ data }) => {
+  const welfareSummary = data.welfare_summary_list || []
+  const expensesSummary = data.expenses_summary_list || []
+  const totalIncome = parseFloat(data.total_inflow || 0)
+  const totalExpenses = parseFloat(data.total_expenses || 0)
+  const netBalance = totalIncome - totalExpenses
+
+  return (
+    <div>
+      {/* KPI Cards on screen */}
+      <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
+        <Col xs={24} sm={8}>
+          <Card style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10 }}>
+            <Text style={{ fontSize: 11, fontWeight: 600, color: '#1e40af', textTransform: 'uppercase' }}>
+              Total Receipts &amp; Income (വരവ്)
+            </Text>
+            <div style={{ fontSize: 24, fontWeight: 700, color: '#1e40af', marginTop: 4 }}>
+              {formatCurrency(totalIncome)}
+            </div>
+          </Card>
+        </Col>
+        <Col xs={24} sm={8}>
+          <Card style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10 }}>
+            <Text style={{ fontSize: 11, fontWeight: 600, color: '#dc2626', textTransform: 'uppercase' }}>
+              Total Payments &amp; Expenses (ചെലവ്)
+            </Text>
+            <div style={{ fontSize: 24, fontWeight: 700, color: '#dc2626', marginTop: 4 }}>
+              {formatCurrency(totalExpenses)}
+            </div>
+          </Card>
+        </Col>
+        <Col xs={24} sm={8}>
+          <Card style={{ background: netBalance >= 0 ? '#f0fdf4' : '#fff1f2', border: `1px solid ${netBalance >= 0 ? '#bbf7d0' : '#fecdd3'}`, borderRadius: 10 }}>
+            <Text style={{ fontSize: 11, fontWeight: 600, color: netBalance >= 0 ? '#16a34a' : '#e11d48', textTransform: 'uppercase' }}>
+              Net Balance / Surplus (വരവ് - ചെലവ് നീക്കിയിരിപ്പ്)
+            </Text>
+            <div style={{ fontSize: 24, fontWeight: 700, color: netBalance >= 0 ? '#16a34a' : '#e11d48', marginTop: 4 }}>
+              {formatCurrency(netBalance)}
+            </div>
+          </Card>
+        </Col>
+      </Row>
+
+      {/* Formal Cooperative Ledger Card */}
+      <Card
+        title={
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+            <div>
+              <Text strong style={{ fontSize: 16, color: 'var(--color-text-primary)' }}>
+                Financial Summary Statement (Audit Ledger)
+              </Text>
+              <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 2 }}>
+                Period: {data.label} ({data.start} to {data.end})
+              </div>
+            </div>
+            <Tag color="blue" style={{ fontSize: 12, padding: '4px 10px' }}>
+              Cooperative Accounts Ledger Format
+            </Tag>
+          </div>
+        }
+        style={{ marginBottom: 24, borderRadius: 10 }}
+      >
+        <div style={{ overflowX: 'auto' }}>
+          <table className="coop-ledger-table">
+            <thead>
+              <tr>
+                <th style={{ width: 60, textAlign: 'center' }}>Sl No.</th>
+                <th>Particulars / Account Head (വിവരണം)</th>
+                <th style={{ width: 180, textAlign: 'right' }}>Income / വരവ് (₹)</th>
+                <th style={{ width: 180, textAlign: 'right' }}>Expense / ചെലവ് (₹)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {/* PART I: RECEIPTS & INCOME */}
+              <tr className="section-header">
+                <td style={{ textAlign: 'center' }}><strong>I</strong></td>
+                <td colSpan={3}><strong>RECEIPTS &amp; INCOME (വരവ് ഇനങ്ങൾ)</strong></td>
+              </tr>
+
+              {/* Welfare Collections */}
+              {welfareSummary.length > 0 ? (
+                <>
+                  {welfareSummary.map((w, idx) => (
+                    <tr key={`welfare-${w.chit_group_id || idx}`}>
+                      <td style={{ textAlign: 'center' }}>{`1.${idx + 1}`}</td>
+                      <td style={{ paddingLeft: 24 }}>
+                        Welfare Fund: <strong>{w.group_no}</strong> — {w.group_name} ({w.count} payments received)
+                      </td>
+                      <td style={{ textAlign: 'right' }}>{parseFloat(w.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                      <td style={{ textAlign: 'right', color: '#94a3b8' }}>—</td>
+                    </tr>
+                  ))}
+                  <tr className="subtotal-row">
+                    <td></td>
+                    <td style={{ paddingLeft: 24 }}><em>Subtotal — Total Welfare Collections</em></td>
+                    <td style={{ textAlign: 'right' }}><strong>₹{parseFloat(data.welfare_collections || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong></td>
+                    <td style={{ textAlign: 'right', color: '#94a3b8' }}>—</td>
+                  </tr>
+                </>
+              ) : (
+                <tr>
+                  <td style={{ textAlign: 'center' }}>1</td>
+                  <td>Welfare Fund Collections ({data.welfare_count || 0} payments)</td>
+                  <td style={{ textAlign: 'right' }}>{parseFloat(data.welfare_collections || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                  <td style={{ textAlign: 'right', color: '#94a3b8' }}>—</td>
+                </tr>
+              )}
+
+              {/* Loan Repayments */}
+              <tr>
+                <td style={{ textAlign: 'center' }}>2</td>
+                <td>Loan Repayments / EMI Principal Collections ({data.loan_repayment_count || 0} installments)</td>
+                <td style={{ textAlign: 'right' }}>{parseFloat(data.loan_repayments || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                <td style={{ textAlign: 'right', color: '#94a3b8' }}>—</td>
+              </tr>
+
+              {/* Loan Service Charge / Interest Received if tracked */}
+              {parseFloat(data.loan_interest_received || 0) > 0 && (
+                <tr>
+                  <td style={{ textAlign: 'center' }}>3</td>
+                  <td>Loan Service Charges &amp; Interest Received</td>
+                  <td style={{ textAlign: 'right' }}>{parseFloat(data.loan_interest_received || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                  <td style={{ textAlign: 'right', color: '#94a3b8' }}>—</td>
+                </tr>
+              )}
+
+              {/* Masavari Collections */}
+              <tr>
+                <td style={{ textAlign: 'center' }}>4</td>
+                <td>Masavari (Membership Subscription) Collections ({data.masavari_count || 0} payments)</td>
+                <td style={{ textAlign: 'right' }}>{parseFloat(data.masavari_collected || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                <td style={{ textAlign: 'right', color: '#94a3b8' }}>—</td>
+              </tr>
+
+              {/* Registration & Capital Deposits */}
+              <tr>
+                <td style={{ textAlign: 'center' }}>5</td>
+                <td>Member Registration Fees &amp; Share Capital Deposits ({(data.deposits_list || []).length} items)</td>
+                <td style={{ textAlign: 'right' }}>{parseFloat(data.deposits_made || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                <td style={{ textAlign: 'right', color: '#94a3b8' }}>—</td>
+              </tr>
+
+              {/* Surcharges & Other Profits */}
+              <tr>
+                <td style={{ textAlign: 'center' }}>6</td>
+                <td>Welfare Auction Surcharges &amp; Miscellaneous Profits ({data.other_incomes_count || 0} items)</td>
+                <td style={{ textAlign: 'right' }}>{parseFloat(data.other_incomes || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                <td style={{ textAlign: 'right', color: '#94a3b8' }}>—</td>
+              </tr>
+
+              {/* Dues Collections */}
+              {parseFloat(data.dues_collected || 0) > 0 && (
+                <tr>
+                  <td style={{ textAlign: 'center' }}>7</td>
+                  <td>Standard Dues Collected</td>
+                  <td style={{ textAlign: 'right' }}>{parseFloat(data.dues_collected || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                  <td style={{ textAlign: 'right', color: '#94a3b8' }}>—</td>
+                </tr>
+              )}
+
+              {/* TOTAL INCOME ROW */}
+              <tr className="total-row">
+                <td style={{ textAlign: 'center' }}><strong>—</strong></td>
+                <td><strong>TOTAL RECEIPTS &amp; INCOME (ആകെ വരവ്)</strong></td>
+                <td style={{ textAlign: 'right', color: '#16a34a' }}>
+                  <strong>₹{totalIncome.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong>
+                </td>
+                <td style={{ textAlign: 'right', color: '#94a3b8' }}>—</td>
+              </tr>
+
+              {/* PART II: EXPENSES */}
+              <tr className="section-header">
+                <td style={{ textAlign: 'center' }}><strong>II</strong></td>
+                <td colSpan={3}><strong>PAYMENTS &amp; EXPENSES (ചെലവ് ഇനങ്ങൾ)</strong></td>
+              </tr>
+
+              {expensesSummary.length > 0 ? (
+                expensesSummary.map((e, idx) => (
+                  <tr key={`exp-${e.category || idx}`}>
+                    <td style={{ textAlign: 'center' }}>{idx + 1}</td>
+                    <td style={{ paddingLeft: 24, textTransform: 'capitalize' }}>
+                      Office Expense: <strong>{e.category.replace(/_/g, ' ')}</strong> ({e.count} vouchers)
+                    </td>
+                    <td style={{ textAlign: 'right', color: '#94a3b8' }}>—</td>
+                    <td style={{ textAlign: 'right' }}>{parseFloat(e.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td style={{ textAlign: 'center' }}>1</td>
+                  <td style={{ paddingLeft: 24, fontStyle: 'italic', color: '#94a3b8' }}>No office expenses recorded for this period</td>
+                  <td style={{ textAlign: 'right', color: '#94a3b8' }}>—</td>
+                  <td style={{ textAlign: 'right' }}>0.00</td>
+                </tr>
+              )}
+
+              {/* TOTAL EXPENSES ROW */}
+              <tr className="total-row">
+                <td style={{ textAlign: 'center' }}><strong>—</strong></td>
+                <td><strong>TOTAL PAYMENTS &amp; EXPENSES (ആകെ ചെലവ്)</strong></td>
+                <td style={{ textAlign: 'right', color: '#94a3b8' }}>—</td>
+                <td style={{ textAlign: 'right', color: '#dc2626' }}>
+                  <strong>₹{totalExpenses.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong>
+                </td>
+              </tr>
+
+              {/* NET BALANCE / SURPLUS ROW */}
+              <tr className="net-balance-row">
+                <td style={{ textAlign: 'center' }}><strong>★</strong></td>
+                <td><strong>NET BALANCE / SURPLUS (വരവ് - ചെലവ് നീക്കിയിരിപ്പ്)</strong></td>
+                <td colSpan={2} style={{ textAlign: 'right', color: netBalance >= 0 ? '#16a34a' : '#dc2626', fontSize: 15 }}>
+                  <strong>₹{netBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        {/* Cooperative Signatures */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 40, padding: '0 20px' }}>
+          <div style={{ textAlign: 'center', width: 160, borderTop: '1px solid var(--color-border)', paddingTop: 8 }}>
+            <Text style={{ fontSize: 12, fontWeight: 600 }}>Prepared By (Accountant)</Text>
+          </div>
+          <div style={{ textAlign: 'center', width: 160, borderTop: '1px solid var(--color-border)', paddingTop: 8 }}>
+            <Text style={{ fontSize: 12, fontWeight: 600 }}>General Secretary</Text>
+          </div>
+          <div style={{ textAlign: 'center', width: 160, borderTop: '1px solid var(--color-border)', paddingTop: 8 }}>
+            <Text style={{ fontSize: 12, fontWeight: 600 }}>President</Text>
+          </div>
+        </div>
+      </Card>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────
+// Welfare-wise Collection Report sub-component (Requirement 1)
+// ─────────────────────────────────────────────────────────────
+const WelfareCollectionReport = () => {
+  const [status, setStatus] = useState('all')
+  const [dateRange, setDateRange] = useState(null)
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [downloading, setDownloading] = useState(false)
+  const [drillDownModal, setDrillDownModal] = useState({ open: false, record: null })
+
+  const fetchReport = useCallback(async () => {
+    setLoading(true)
+    try {
+      const params = {}
+      if (status && status !== 'all') params.status = status
+      if (dateRange && dateRange[0] && dateRange[1]) {
+        params.start_date = dateRange[0].format('YYYY-MM-DD')
+        params.end_date = dateRange[1].format('YYYY-MM-DD')
+      }
+      const res = await reportsApi.getWelfareCollectionReport(params)
+      setData(res.data)
+    } catch (_) {
+      message.error('Failed to load welfare collection report.')
+    }
+    setLoading(false)
+  }, [status, dateRange])
+
+  useEffect(() => {
+    fetchReport()
+  }, [fetchReport])
+
+  const handleDownload = async () => {
+    setDownloading(true)
+    try {
+      const params = {}
+      if (status && status !== 'all') params.status = status
+      if (dateRange && dateRange[0] && dateRange[1]) {
+        params.start_date = dateRange[0].format('YYYY-MM-DD')
+        params.end_date = dateRange[1].format('YYYY-MM-DD')
+      }
+      const res = await exportWelfareCollectionReport(params)
+      downloadBlob(res.data, `welfare_collections_${dayjs().format('YYYY-MM-DD')}.xlsx`)
+      message.success('Welfare collection report exported.')
+    } catch (_) {
+      message.error('Failed to export welfare collection report.')
+    }
+    setDownloading(false)
+  }
+
+  const handlePrint = () => {
+    if (!data) return
+    const printWindow = window.open('', '_blank')
+    if (!printWindow) {
+      window.print()
+      return
+    }
+
+    const dateLabel = dayjs().format('DD/MM/YYYY hh:mm A')
+    const dateRangeLabel = dateRange && dateRange[0] && dateRange[1]
+      ? `${dateRange[0].format('DD/MM/YYYY')} to ${dateRange[1].format('DD/MM/YYYY')}`
+      : 'All Time'
+    const statusLabel = status === 'all' ? 'All Welfares' : (status.charAt(0).toUpperCase() + status.slice(1))
+
+    const rowsHtml = (data.results || []).map((row, idx) => {
+      const statusBadge = `<span style="padding: 2px 6px; border-radius: 4px; font-size: 8.5pt; font-weight: 600; text-transform: uppercase; background: ${
+        row.status === 'active' ? '#dcfce7; color: #166534;' :
+        row.status === 'completed' ? '#dbeafe; color: #1e40af;' :
+        row.status === 'upcoming' ? '#fef3c7; color: #92400e;' : '#f1f5f9; color: #475569;'
+      }">${row.status}</span>`
+
+      return `
+        <tr>
+          <td style="text-align: center;">${idx + 1}</td>
+          <td><strong>${row.welfare_name}</strong></td>
+          <td>${row.welfare_number}</td>
+          <td style="text-align: right;">${row.total_members}</td>
+          <td style="text-align: center;">${row.months_completed} / ${row.duration_months}</td>
+          <td style="text-align: right; font-weight: bold;">₹${parseFloat(row.total_amount_collected || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+          <td style="text-align: center;">${statusBadge}</td>
+        </tr>
+      `
+    }).join('')
+
+    const grandTotalMembers = data.summary?.total_members || 0
+    const grandTotalCollected = data.summary?.grand_total_collected || 0
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Welfare-wise Total Collection Report</title>
+          <style>
+            @page { size: A4 portrait; margin: 12mm 10mm 15mm 10mm; }
+            * { box-sizing: border-box; }
+            body { font-family: Arial, "Times New Roman", sans-serif; color: #000; margin: 0; padding: 15px; font-size: 10pt; line-height: 1.4; }
+            .header-org { text-align: center; margin-bottom: 16px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+            h1 { font-size: 15pt; margin: 0 0 4px 0; color: #000; font-family: 'Noto Sans Malayalam', Arial, sans-serif; }
+            .unit-sub { font-size: 11pt; color: #333; font-weight: 600; margin-bottom: 4px; }
+            .rep-title { font-size: 13pt; font-weight: 700; color: #000; text-transform: uppercase; letter-spacing: 0.5px; }
+            .meta-grid { display: flex; justify-content: space-between; margin: 10px 0 16px 0; font-size: 9pt; border-bottom: 1px solid #ccc; padding-bottom: 6px; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 10pt; border: 1px solid #000; }
+            th, td { border: 1px solid #000; padding: 6px 8px; }
+            th { background-color: #f1f5f9; font-weight: bold; color: #000; }
+            tr { page-break-inside: avoid; }
+            thead { display: table-header-group; }
+            .total-row { font-weight: bold; background-color: #e2e8f0 !important; }
+            .sign-grid { display: flex; justify-content: space-between; margin-top: 40px; padding: 0 20px; }
+            .sign-box { text-align: center; border-top: 1px solid #000; width: 160px; padding-top: 6px; font-weight: 600; font-size: 9.5pt; }
+          </style>
+        </head>
+        <body>
+          <div class="header-org">
+            <h1>കേരള വ്യാപാരി വ്യവസായി ഏകോപന സമിതി</h1>
+            <div class="unit-sub">Azhikode Paybazar Unit (Reg No. 262/81)</div>
+            <div class="rep-title">WELFARE-WISE TOTAL COLLECTION REPORT</div>
+          </div>
+          <div class="meta-grid">
+            <div><strong>Status Filter:</strong> ${statusLabel}</div>
+            <div><strong>Date Range:</strong> ${dateRangeLabel}</div>
+            <div><strong>Generated On:</strong> ${dateLabel}</div>
+            <div><strong>Total Schemes:</strong> ${(data.results || []).length}</div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 40px; text-align: center;">#</th>
+                <th>Welfare Name</th>
+                <th>Welfare Number</th>
+                <th style="text-align: right;">Total Members</th>
+                <th style="text-align: center;">Months Completed</th>
+                <th style="text-align: right;">Total Amount Collected</th>
+                <th style="text-align: center;">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+              <tr class="total-row">
+                <td colspan="3" style="text-align: right;">Grand Total:</td>
+                <td style="text-align: right;">${grandTotalMembers}</td>
+                <td style="text-align: center;">—</td>
+                <td style="text-align: right;">₹${parseFloat(grandTotalCollected).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                <td style="text-align: center;">—</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="sign-grid">
+            <div class="sign-box">Prepared By (Accountant)</div>
+            <div class="sign-box">General Secretary</div>
+            <div class="sign-box">President</div>
+          </div>
+          <script>
+            window.onload = function() { window.print(); }
+          </script>
+        </body>
+      </html>
+    `)
+    printWindow.document.close()
+  }
+
+  const columns = [
+    {
+      title: 'Sl No',
+      key: 'index',
+      width: 70,
+      align: 'center',
+      render: (_, __, index) => index + 1,
+    },
+    {
+      title: 'Welfare Name',
+      dataIndex: 'welfare_name',
+      key: 'welfare_name',
+      render: (text, record) => (
+        <a
+          onClick={() => setDrillDownModal({ open: true, record })}
+          style={{ fontWeight: 600, color: '#1e40af' }}
+        >
+          {text}
+        </a>
+      ),
+    },
+    {
+      title: 'Welfare Number',
+      dataIndex: 'welfare_number',
+      key: 'welfare_number',
+      render: (text) => <Tag color="blue">{text}</Tag>,
+    },
+    {
+      title: 'Total Members',
+      dataIndex: 'total_members',
+      key: 'total_members',
+      align: 'right',
+      render: (val) => (val || 0).toLocaleString(),
+    },
+    {
+      title: 'Months Completed',
+      key: 'months_completed',
+      align: 'center',
+      render: (_, r) => `${r.months_completed} / ${r.duration_months} Months`,
+    },
+    {
+      title: 'Total Amount Collected',
+      dataIndex: 'total_amount_collected',
+      key: 'total_amount_collected',
+      align: 'right',
+      render: (val) => (
+        <Text strong style={{ color: '#16a34a', fontSize: 14 }}>
+          {formatCurrency(val)}
+        </Text>
+      ),
+    },
+    {
+      title: 'Status',
+      dataIndex: 'status',
+      key: 'status',
+      align: 'center',
+      render: (status) => {
+        const color = status === 'active' ? 'green' : status === 'completed' ? 'blue' : status === 'upcoming' ? 'orange' : 'default'
+        return <Tag color={color} style={{ textTransform: 'capitalize' }}>{status}</Tag>
+      },
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      align: 'center',
+      render: (_, record) => (
+        <Button
+          size="small"
+          icon={<EyeOutlined />}
+          onClick={() => setDrillDownModal({ open: true, record })}
+        >
+          View Breakdown
+        </Button>
+      ),
+    },
+  ]
+
+  const summary = data?.summary || {}
+  const results = data?.results || []
+
+  return (
+    <div>
+      {/* Formal Header for browser print (Ctrl+P) */}
+      {data && (
+        <div className="print-only coop-print-header">
+          <div className="org-title">കേരള വ്യാപാരി വ്യവസായി ഏകോപന സമിതി</div>
+          <div className="unit-title">Azhikode Paybazar Unit (Reg No. 262/81)</div>
+          <div className="rep-title">WELFARE-WISE TOTAL COLLECTION REPORT</div>
+          <div className="rep-meta">
+            Filter: {status === 'all' ? 'All Schemes' : status.toUpperCase()} | Generated: {dayjs().format('DD/MM/YYYY hh:mm A')}
+          </div>
+        </div>
+      )}
+
+      {/* Filters Card */}
+      <Card style={{ marginBottom: 20, border: '1px solid #bfdbfe', background: '#eff6ff' }} bodyStyle={{ padding: '16px 20px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <SafetyOutlined style={{ color: '#1e40af', fontSize: 16 }} />
+            <Text style={{ fontWeight: 600, color: '#1e40af' }}>Welfare Status:</Text>
+          </div>
+          <Select
+            value={status}
+            onChange={setStatus}
+            style={{ width: 160 }}
+            options={[
+              { label: 'All Schemes', value: 'all' },
+              { label: 'Active', value: 'active' },
+              { label: 'Completed', value: 'completed' },
+              { label: 'Upcoming', value: 'upcoming' },
+              { label: 'Terminated', value: 'terminated' },
+            ]}
+          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <CalendarOutlined style={{ color: '#1e40af', fontSize: 16 }} />
+            <Text style={{ fontWeight: 600, color: '#1e40af' }}>Payment Date Range:</Text>
+          </div>
+          <DatePicker.RangePicker
+            value={dateRange}
+            onChange={setDateRange}
+            format="DD/MM/YYYY"
+            allowClear={true}
+            placeholder={['Start Date', 'End Date']}
+            style={{ minWidth: 240 }}
+          />
+          <Button
+            type="primary"
+            onClick={fetchReport}
+            loading={loading}
+            style={{ background: '#1e40af', borderColor: '#1e40af' }}
+          >
+            Generate Report
+          </Button>
+          {data && (
+            <>
+              <Button
+                type="default"
+                onClick={handleDownload}
+                loading={downloading}
+                style={{ background: 'var(--color-bg-elevated)', color: '#2563eb', borderColor: '#2563eb' }}
+              >
+                Download Excel
+              </Button>
+              <Button
+                type="primary"
+                onClick={handlePrint}
+                style={{ background: '#10b981', borderColor: '#10b981' }}
+              >
+                Print Report
+              </Button>
+            </>
+          )}
+        </div>
+      </Card>
+
+      {/* Summary KPI Cards */}
+      {data && (
+        <Row gutter={[16, 16]} style={{ marginBottom: 20 }}>
+          <Col xs={24} sm={12} lg={6}>
+            <Card style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10 }}>
+              <Text style={{ fontSize: 11, fontWeight: 600, color: '#15803d', textTransform: 'uppercase' }}>
+                Grand Total Collections
+              </Text>
+              <div style={{ fontSize: 24, fontWeight: 700, color: '#15803d', marginTop: 4 }}>
+                {formatCurrency(summary.grand_total_collected || 0)}
+              </div>
+              <Text style={{ fontSize: 11, color: '#64748b' }}>Actual cash received across all welfares</Text>
+            </Card>
+          </Col>
+          <Col xs={24} sm={12} lg={6}>
+            <Card style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10 }}>
+              <Text style={{ fontSize: 11, fontWeight: 600, color: '#1d4ed8', textTransform: 'uppercase' }}>
+                Total Enrolled Members
+              </Text>
+              <div style={{ fontSize: 24, fontWeight: 700, color: '#1d4ed8', marginTop: 4 }}>
+                {(summary.total_members || 0).toLocaleString()}
+              </div>
+              <Text style={{ fontSize: 11, color: '#64748b' }}>Across {summary.total_welfares || 0} welfare schemes</Text>
+            </Card>
+          </Col>
+          <Col xs={24} sm={12} lg={6}>
+            <Card style={{ background: '#faf5ff', border: '1px solid #e9d5ff', borderRadius: 10 }}>
+              <Text style={{ fontSize: 11, fontWeight: 600, color: '#7e22ce', textTransform: 'uppercase' }}>
+                Active Welfare Schemes
+              </Text>
+              <div style={{ fontSize: 24, fontWeight: 700, color: '#7e22ce', marginTop: 4 }}>
+                {summary.active_welfares || 0}
+              </div>
+              <Text style={{ fontSize: 11, color: '#64748b' }}>Currently running schemes</Text>
+            </Card>
+          </Col>
+          <Col xs={24} sm={12} lg={6}>
+            <Card style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10 }}>
+              <Text style={{ fontSize: 11, fontWeight: 600, color: '#475569', textTransform: 'uppercase' }}>
+                Completed Schemes
+              </Text>
+              <div style={{ fontSize: 24, fontWeight: 700, color: '#475569', marginTop: 4 }}>
+                {summary.completed_welfares || 0}
+              </div>
+              <Text style={{ fontSize: 11, color: '#64748b' }}>Successfully closed funds</Text>
+            </Card>
+          </Col>
+        </Row>
+      )}
+
+      {/* Main Table */}
+      <Card
+        title={
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Space>
+              <SafetyOutlined style={{ color: '#1e40af' }} />
+              <Text style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>
+                Welfare Schemes Collection Summary ({results.length})
+              </Text>
+            </Space>
+          </div>
+        }
+      >
+        <Table
+          dataSource={results}
+          columns={columns}
+          rowKey="id"
+          loading={loading}
+          pagination={false}
+          scroll={{ x: true }}
+          summary={() => {
+            if (!data || results.length === 0) return null
+            return (
+              <Table.Summary fixed>
+                <Table.Summary.Row style={{ background: 'var(--color-bg-base)', fontWeight: 700 }}>
+                  <Table.Summary.Cell index={0} align="center"><strong>Total</strong></Table.Summary.Cell>
+                  <Table.Summary.Cell index={1}><strong>All Welfares ({summary.total_welfares})</strong></Table.Summary.Cell>
+                  <Table.Summary.Cell index={2}>—</Table.Summary.Cell>
+                  <Table.Summary.Cell index={3} align="right">
+                    <strong>{(summary.total_members || 0).toLocaleString()}</strong>
+                  </Table.Summary.Cell>
+                  <Table.Summary.Cell index={4} align="center">—</Table.Summary.Cell>
+                  <Table.Summary.Cell index={5} align="right">
+                    <strong style={{ color: '#16a34a', fontSize: 15 }}>
+                      {formatCurrency(summary.grand_total_collected || 0)}
+                    </strong>
+                  </Table.Summary.Cell>
+                  <Table.Summary.Cell index={6} align="center">—</Table.Summary.Cell>
+                  <Table.Summary.Cell index={7} align="center">—</Table.Summary.Cell>
+                </Table.Summary.Row>
+              </Table.Summary>
+            )
+          }}
+        />
+      </Card>
+
+      {/* Drill-down Monthly Breakdown Modal */}
+      <Modal
+        title={
+          drillDownModal.record ? (
+            <div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: '#1e40af' }}>
+                Monthly Collection Breakdown — {drillDownModal.record.welfare_name} ({drillDownModal.record.welfare_number})
+              </div>
+              <div style={{ fontSize: 12, color: '#64748b', fontWeight: 'normal', marginTop: 2 }}>
+                Fund Value: {formatCurrency(drillDownModal.record.chit_value)} | Installment: {formatCurrency(drillDownModal.record.monthly_instalment)} | Members: {drillDownModal.record.total_members}
+              </div>
+            </div>
+          ) : 'Monthly Collection Breakdown'
+        }
+        open={drillDownModal.open}
+        onCancel={() => setDrillDownModal({ open: false, record: null })}
+        width={800}
+        footer={[
+          <Button key="close" type="primary" onClick={() => setDrillDownModal({ open: false, record: null })}>
+            Close
+          </Button>
+        ]}
+      >
+        {drillDownModal.record && (
+          <Table
+            dataSource={drillDownModal.record.monthly_breakdown || []}
+            rowKey="month_number"
+            pagination={false}
+            size="small"
+            columns={[
+              {
+                title: 'Month #',
+                dataIndex: 'month_number',
+                render: (val) => <strong>Month {val}</strong>,
+              },
+              {
+                title: 'Installment Amount',
+                dataIndex: 'instalment_amount',
+                align: 'right',
+                render: (val) => formatCurrency(val),
+              },
+              {
+                title: 'Members Paid',
+                dataIndex: 'members_paid',
+                align: 'center',
+                render: (val) => <Tag color="green">{val}</Tag>,
+              },
+              {
+                title: 'Members Not Paid',
+                dataIndex: 'members_not_paid',
+                align: 'center',
+                render: (val) => val > 0 ? <Tag color="red">{val}</Tag> : <Tag color="default">0</Tag>,
+              },
+              {
+                title: 'Total Collected',
+                dataIndex: 'total_collected',
+                align: 'right',
+                render: (val) => (
+                  <Text strong style={{ color: '#16a34a' }}>
+                    {formatCurrency(val)}
+                  </Text>
+                ),
+              },
+              {
+                title: 'Collection Status',
+                key: 'status',
+                align: 'center',
+                render: (_, r) => {
+                  const paid = r.members_paid || 0
+                  const notPaid = r.members_not_paid || 0
+                  if (notPaid === 0 && paid > 0) return <Tag color="green">Complete</Tag>
+                  if (paid > 0) return <Tag color="orange">Partial ({paid}/{paid + notPaid})</Tag>
+                  return <Tag color="default">No Collections</Tag>
+                },
+              },
+            ]}
+            summary={(pageData) => {
+              const totalCollected = pageData.reduce((sum, r) => sum + parseFloat(r.total_collected || 0), 0)
+              const totalPaidCount = pageData.reduce((sum, r) => sum + (r.members_paid || 0), 0)
+              return (
+                <Table.Summary.Row style={{ background: '#f8fafc', fontWeight: 700 }}>
+                  <Table.Summary.Cell index={0}>Total</Table.Summary.Cell>
+                  <Table.Summary.Cell index={1}>—</Table.Summary.Cell>
+                  <Table.Summary.Cell index={2} align="center">{totalPaidCount} payments</Table.Summary.Cell>
+                  <Table.Summary.Cell index={3}>—</Table.Summary.Cell>
+                  <Table.Summary.Cell index={4} align="right">
+                    <span style={{ color: '#16a34a', fontSize: 14 }}>{formatCurrency(totalCollected)}</span>
+                  </Table.Summary.Cell>
+                  <Table.Summary.Cell index={5}>—</Table.Summary.Cell>
+                </Table.Summary.Row>
+              )
+            }}
+          />
+        )}
+      </Modal>
     </div>
   )
 }
@@ -1334,32 +2334,32 @@ const WelfareReport = ({ chitsSummary }) => {
         <head>
           <title>Welfare Fund Report — ${schemeTitle}</title>
           <style>
-            @page { size: A4 portrait; margin: 12mm 15mm; }
+            @page { size: A4 portrait; margin: 12mm 10mm 15mm 10mm; }
             * { box-sizing: border-box; }
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #1e293b; margin: 0; padding: 15px; font-size: 11px; }
-            .header-org { text-align: center; margin-bottom: 12px; }
-            h1 { font-size: 18px; margin: 0 0 3px 0; color: #1e3a8a; }
-            .unit-sub { font-size: 12px; color: #64748b; font-weight: 600; margin-bottom: 4px; }
-            .rep-title { font-size: 14px; font-weight: 700; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid #1e3a8a; padding-bottom: 5px; display: inline-block; margin-top: 4px; }
-            .meta-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 12px 0; background: #f8fafc; padding: 8px 12px; border-radius: 6px; border: 1px solid #e2e8f0; font-size: 10.5px; }
-            .section-title { font-size: 12.5px; font-weight: 700; color: #1e3a8a; margin: 16px 0 6px 0; border-left: 3px solid #1e3a8a; padding-left: 8px; text-transform: uppercase; }
-            .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; }
-            .kpi-card { background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px; text-align: center; }
-            .kpi-card .lbl { font-size: 9.5px; color: #64748b; margin-bottom: 2px; }
-            .kpi-card .val { font-size: 13px; font-weight: 700; color: #0f172a; }
-            table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 10px; }
-            th, td { border: 1px solid #cbd5e1; padding: 5px 7px; text-align: left; }
-            th { background-color: #f1f5f9; font-weight: 700; color: #1e293b; }
+            body { font-family: Arial, "Times New Roman", sans-serif; color: #000; margin: 0; padding: 15px; font-size: 10pt; line-height: 1.4; }
+            .header-org { text-align: center; margin-bottom: 14px; border-bottom: 2px solid #000; padding-bottom: 8px; }
+            h1 { font-size: 15pt; margin: 0 0 3px 0; color: #000; font-family: 'Noto Sans Malayalam', Arial, sans-serif; }
+            .unit-sub { font-size: 11pt; color: #333; font-weight: 600; margin-bottom: 4px; }
+            .rep-title { font-size: 13pt; font-weight: 700; color: #000; text-transform: uppercase; letter-spacing: 0.5px; }
+            .meta-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 10px 0 14px 0; background: #f8fafc; padding: 6px 10px; border: 1px solid #000; font-size: 9pt; }
+            .section-title { font-size: 11pt; font-weight: 700; color: #000; margin: 14px 0 6px 0; border-left: 3px solid #000; padding-left: 6px; text-transform: uppercase; }
+            .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 12px; }
+            .kpi-card { background: #f8fafc; border: 1px solid #000; padding: 6px; text-align: center; }
+            .kpi-card .lbl { font-size: 8.5pt; color: #444; margin-bottom: 2px; }
+            .kpi-card .val { font-size: 11pt; font-weight: 700; color: #000; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 9.5pt; border: 1px solid #000; }
+            th, td { border: 1px solid #000; padding: 5px 7px; text-align: left; }
+            th { background-color: #f1f5f9; font-weight: 700; color: #000; }
             tr:nth-child(even) td { background-color: #fafafa; }
-            .total-row { font-weight: 700; background-color: #f1f5f9 !important; }
-            .badge { display: inline-block; padding: 2px 5px; border-radius: 4px; font-size: 9px; font-weight: 600; }
+            .total-row { font-weight: 700; background-color: #e2e8f0 !important; }
+            .badge { display: inline-block; padding: 2px 5px; border-radius: 4px; font-size: 8.5pt; font-weight: 600; }
             .badge-paid { background: #dcfce7; color: #15803d; }
             .badge-pending { background: #fef3c7; color: #b45309; }
             .badge-overdue { background: #fee2e2; color: #b91c1c; }
             .badge-gold { background: #fef08a; color: #854d0e; }
             .badge-blue { background: #dbeafe; color: #1d4ed8; }
-            .sign-grid { display: flex; justify-content: space-between; margin-top: 30px; padding: 0 20px; font-size: 11px; }
-            .sign-box { text-align: center; border-top: 1px solid #94a3b8; width: 160px; padding-top: 6px; font-weight: 600; }
+            .sign-grid { display: flex; justify-content: space-between; margin-top: 35px; padding: 0 20px; font-size: 9.5pt; }
+            .sign-box { text-align: center; border-top: 1px solid #000; width: 160px; padding-top: 6px; font-weight: 600; }
             @media print {
               body { padding: 0; }
               table { page-break-inside: auto; }
@@ -2020,47 +3020,67 @@ const LoanReport = () => {
       .reduce((sum, item) => sum + Number(parseFloat(item.amount_paid || 0).toFixed(2)), 0)
 
     printWindow.document.write(`
+      <!DOCTYPE html>
       <html>
         <head>
           <title>Loan Repayments / EMI Report</title>
           <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; color: #333; }
-            h1 { font-size: 20px; margin-bottom: 5px; }
-            .meta { font-size: 12px; color: #666; margin-bottom: 20px; }
-            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; font-size: 12px; }
-            th { background-color: #f5f5f5; font-weight: bold; }
-            .total-row { font-weight: bold; background-color: #f9fafb; }
+            @page { size: A4 portrait; margin: 12mm 10mm 15mm 10mm; }
+            * { box-sizing: border-box; }
+            body { font-family: Arial, "Times New Roman", sans-serif; padding: 15px; color: #000; margin: 0; font-size: 10pt; line-height: 1.4; }
+            .header-org { text-align: center; margin-bottom: 16px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+            h1 { font-size: 15pt; margin: 0 0 4px 0; color: #000; font-family: 'Noto Sans Malayalam', Arial, sans-serif; }
+            .unit-sub { font-size: 11pt; color: #333; font-weight: 600; margin-bottom: 4px; }
+            .rep-title { font-size: 13pt; font-weight: 700; color: #000; text-transform: uppercase; letter-spacing: 0.5px; }
+            .meta { display: flex; justify-content: space-between; font-size: 9pt; color: #333; margin-bottom: 16px; border-bottom: 1px solid #ccc; padding-bottom: 6px; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 9.5pt; border: 1px solid #000; }
+            th, td { border: 1px solid #000; padding: 6px 8px; text-align: left; }
+            th { background-color: #f1f5f9; font-weight: bold; color: #000; }
+            tr { page-break-inside: avoid; }
+            thead { display: table-header-group; }
+            .total-row { font-weight: bold; background-color: #e2e8f0 !important; }
+            .sign-grid { display: flex; justify-content: space-between; margin-top: 40px; padding: 0 20px; }
+            .sign-box { text-align: center; border-top: 1px solid #000; width: 160px; padding-top: 6px; font-weight: 600; font-size: 9.5pt; }
           </style>
         </head>
         <body>
-          <h1 style="font-family: 'Noto Sans Malayalam', sans-serif;">കേരള വ്യാപാരി വ്യവസായി ഏകോപന സമിതി Azhikode Paybazar Unit (Reg No. 262/81)</h1>
-          <div style="font-weight: bold; font-size: 14px; margin-bottom: 10px;">LOAN REPAYMENTS / EMI REPORT</div>
+          <div class="header-org">
+            <h1>കേരള വ്യാപാരി വ്യവസായി ഏകോപന സമിതി</h1>
+            <div class="unit-sub">Azhikode Paybazar Unit (Reg No. 262/81)</div>
+            <div class="rep-title">LOAN REPAYMENTS / EMI REPORT</div>
+          </div>
           <div class="meta">
-            <strong>Date Range:</strong> ${dateRangeLabel} | <strong>Generated:</strong> ${dateLabel} | <strong>Total Records:</strong> ${results.length}
+            <div><strong>Date Range:</strong> ${dateRangeLabel}</div>
+            <div><strong>Generated:</strong> ${dateLabel}</div>
+            <div><strong>Total Records:</strong> ${results.length}</div>
           </div>
           <table>
             <thead>
               <tr>
-                <th>#</th>
+                <th style="width: 40px; text-align: center;">#</th>
                 <th>Member</th>
                 <th>Loan No</th>
-                <th>EMI No</th>
-                <th>Amount (₹)</th>
+                <th style="text-align: center;">EMI #</th>
+                <th style="text-align: right;">Amount (₹)</th>
                 <th>Due Date</th>
                 <th>Paid Date</th>
-                <th>Status</th>
+                <th style="text-align: center;">Status</th>
               </tr>
             </thead>
             <tbody>
               ${rows}
               <tr class="total-row">
-                <td colspan="4" style="text-align: right;">Total Amount Received:</td>
-                <td>₹${totalPaid.toFixed(2)}</td>
+                <td colspan="4" style="text-align: right;"><strong>Total Amount Received:</strong></td>
+                <td style="text-align: right;"><strong>₹${totalPaid.toFixed(2)}</strong></td>
                 <td colspan="3"></td>
               </tr>
             </tbody>
           </table>
+          <div class="sign-grid">
+            <div class="sign-box">Prepared By (Accountant)</div>
+            <div class="sign-box">General Secretary</div>
+            <div class="sign-box">President</div>
+          </div>
           <script>
             window.onload = function() {
               window.print();
@@ -2410,41 +3430,56 @@ const ReportsPage = () => {
         <head>
           <title>${title}</title>
           <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; color: #333; }
-            h1 { font-size: 20px; margin-bottom: 5px; }
-            .meta { font-size: 12px; color: #666; margin-bottom: 20px; }
-            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; font-size: 13px; }
-            th { background-color: #f5f5f5; font-weight: bold; }
-            .total-row { font-weight: bold; background-color: #fdf2f2; }
+            @page { size: A4 portrait; margin: 12mm 10mm 15mm 10mm; }
+            * { box-sizing: border-box; }
+            body { font-family: Arial, "Times New Roman", sans-serif; padding: 15px; color: #000; margin: 0; font-size: 10pt; line-height: 1.4; }
+            .header-org { text-align: center; margin-bottom: 16px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+            h1 { font-size: 15pt; margin: 0 0 4px 0; color: #000; font-family: 'Noto Sans Malayalam', Arial, sans-serif; }
+            .unit-sub { font-size: 11pt; color: #333; font-weight: 600; margin-bottom: 4px; }
+            .rep-title { font-size: 13pt; font-weight: 700; color: #000; text-transform: uppercase; letter-spacing: 0.5px; }
+            .meta { display: flex; justify-content: space-between; font-size: 9pt; color: #333; margin-bottom: 16px; border-bottom: 1px solid #ccc; padding-bottom: 6px; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 9.5pt; border: 1px solid #000; }
+            th, td { border: 1px solid #000; padding: 6px 8px; text-align: left; }
+            th { background-color: #f1f5f9; font-weight: bold; color: #000; }
+            tr { page-break-inside: avoid; }
+            thead { display: table-header-group; }
+            .total-row { font-weight: bold; background-color: #e2e8f0 !important; }
             ul { margin: 0; padding-left: 15px; }
-            @media print {
-              body { padding: 0; }
-              button { display: none; }
-            }
+            .sign-grid { display: flex; justify-content: space-between; margin-top: 40px; padding: 0 20px; }
+            .sign-box { text-align: center; border-top: 1px solid #000; width: 160px; padding-top: 6px; font-weight: 600; font-size: 9.5pt; }
           </style>
         </head>
         <body>
-          <h1 style="font-family: 'Noto Sans Malayalam', sans-serif;">കേരള വ്യാപാരി വ്യവസായി ഏകോപന സമിതി Azhikode Paybazar Unit (Reg No. 262/81)</h1>
-          <div style="font-weight: bold; font-size: 14px; margin-bottom: 10px;">DUES & OVERDUES REPORT</div>
+          <div class="header-org">
+            <h1>കേരള വ്യാപാരി വ്യവസായി ഏകോപന സമിതി</h1>
+            <div class="unit-sub">Azhikode Paybazar Unit (Reg No. 262/81)</div>
+            <div class="rep-title">${title.toUpperCase()}</div>
+          </div>
           <div class="meta">
-            <strong>Report Type:</strong> ${title} | <strong>Date:</strong> ${dateLabel} | <strong>View Mode:</strong> ${duesViewMode === 'grouped' ? 'Grouped by Member' : 'Detailed List'}
+            <div><strong>Report Type:</strong> ${title}</div>
+            <div><strong>Date:</strong> ${dateLabel}</div>
+            <div><strong>View Mode:</strong> ${duesViewMode === 'grouped' ? 'Grouped by Member' : 'Detailed List'}</div>
           </div>
           <table>
             <thead>
               ${duesViewMode === 'grouped' 
-                ? '<tr><th>Member</th><th>Dues Categories</th><th>Dues List</th><th style="text-align: right;">Total Amount</th></tr>'
-                : '<tr><th>#</th><th>Member</th><th>Type</th><th>Details</th><th>Due Date</th><th>Days Overdue</th><th style="text-align: right;">Amount</th></tr>'
+                ? '<tr><th>Member</th><th>Dues Categories</th><th>Dues List</th><th style="text-align: right;">Total Amount (₹)</th></tr>'
+                : '<tr><th style="width: 40px; text-align: center;">#</th><th>Member</th><th>Type</th><th>Details</th><th>Due Date</th><th>Days Overdue</th><th style="text-align: right;">Amount (₹)</th></tr>'
               }
             </thead>
             <tbody>
               ${tableRows}
               <tr class="total-row">
                 <td colspan="${duesViewMode === 'grouped' ? '3' : '6'}" style="text-align: right;">Grand Total:</td>
-                <td style="text-align: right; color: #d32f2f;">₹${totalSum.toFixed(2)}</td>
+                <td style="text-align: right; font-weight: bold;">₹${totalSum.toFixed(2)}</td>
               </tr>
             </tbody>
           </table>
+          <div class="sign-grid">
+            <div class="sign-box">Prepared By (Accountant)</div>
+            <div class="sign-box">General Secretary</div>
+            <div class="sign-box">President</div>
+          </div>
           <script>
             window.onload = function() {
               window.print();
@@ -2592,6 +3627,18 @@ const ReportsPage = () => {
               </span>
             ),
             children: <PeriodReport />,
+          },
+
+          /* ─── WELFARE-WISE COLLECTIONS TAB (Requirement 1) ─── */
+          {
+            key: 'welfare-collections',
+            label: (
+              <span>
+                <SafetyOutlined style={{ marginRight: 6 }} />
+                Welfare-wise Collections
+              </span>
+            ),
+            children: <WelfareCollectionReport />,
           },
 
           /* ─── WELFARE TAB ─── */
