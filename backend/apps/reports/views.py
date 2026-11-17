@@ -701,10 +701,19 @@ class PeriodReportView(APIView):
             gno = item.get('enrollment__chit_group__group_no') or ''
             k = (gno, gname)
             amt = Decimal(str(item.get('amount_paid') or 0))
-            welfare_by_group_dict[k] = welfare_by_group_dict.get(k, Decimal('0.00')) + amt
+            if k not in welfare_by_group_dict:
+                welfare_by_group_dict[k] = {'amount': Decimal('0.00'), 'count': 0}
+            welfare_by_group_dict[k]['amount'] += amt
+            welfare_by_group_dict[k]['count'] += 1
 
         welfare_summary_list = [
-            {'group_no': k[0], 'group_name': k[1], 'amount': str(v)}
+            {
+                'group_no': k[0],
+                'group_name': k[1],
+                'amount': str(v['amount']),
+                'total_amount': str(v['amount']),
+                'count': v['count'],
+            }
             for k, v in sorted(welfare_by_group_dict.items(), key=lambda x: str(x[0][0]))
         ]
 
@@ -712,7 +721,7 @@ class PeriodReportView(APIView):
         expense_categories_dict = dict(DailyEntry.CATEGORIES)
         expenses_grouped = list(DailyEntry.objects.filter(
             entry_type='expense', date__gte=start, date__lte=end
-        ).values('category').annotate(total=Sum('amount')).order_by('-total'))
+        ).values('category').annotate(total=Sum('amount'), count=Count('id')).order_by('-total'))
         expenses_summary_list = []
         for eg in expenses_grouped:
             cat_key = eg['category']
@@ -721,6 +730,8 @@ class PeriodReportView(APIView):
                 'category': cat_key,
                 'category_name': cat_label,
                 'amount': str(eg['total']),
+                'total_amount': str(eg['total']),
+                'count': eg.get('count', 1),
             })
 
         # Loan interest & service charges

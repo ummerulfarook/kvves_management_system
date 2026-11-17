@@ -102,8 +102,8 @@ const PeriodReport = () => {
     }
 
     const dateLabel = dayjs().format('DD/MM/YYYY hh:mm A')
-    const totalIncome = parseFloat(data.total_inflow || 0)
-    const totalExpenses = parseFloat(data.total_expenses || 0)
+    const totalIncome = parseFloat(data.total_inflow || 0) || 0
+    const totalExpenses = parseFloat(data.total_expenses || 0) || 0
     const netBalance = totalIncome - totalExpenses
     const welfareSummary = data.welfare_summary_list || []
     const expensesSummary = data.expenses_summary_list || []
@@ -112,19 +112,27 @@ const PeriodReport = () => {
       // ─── PRINT SUMMARY VIEW (Kerala Cooperative Audit Ledger) ───
       let welfareRows = ''
       if (welfareSummary.length > 0) {
-        welfareRows = welfareSummary.map((w, idx) => `
+        welfareRows = welfareSummary.map((w, idx) => {
+          const wAmt = parseFloat(w.total_amount ?? w.amount ?? 0) || 0
+          const wCount = (w.count !== undefined && w.count !== null && !isNaN(Number(w.count)))
+            ? ` (${w.count} payments received)`
+            : ''
+          const wLabel = w.group_no
+            ? `Welfare Fund: <strong>${w.group_no}</strong> — ${w.group_name || 'Scheme'}`
+            : `Welfare Fund: <strong>${w.group_name || 'Scheme'}</strong>`
+          return `
           <tr>
             <td style="text-align: center;">1.${idx + 1}</td>
-            <td style="padding-left: 20px;">Welfare Fund: <strong>${w.group_no}</strong> — ${w.group_name} (${w.count} payments received)</td>
-            <td style="text-align: right;">${parseFloat(w.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+            <td style="padding-left: 20px;">${wLabel}${wCount}</td>
+            <td style="text-align: right;">${wAmt.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
             <td style="text-align: right; color: #888;">—</td>
           </tr>
-        `).join('')
+        `}).join('')
         welfareRows += `
           <tr style="background-color: #f8fafc; font-weight: 600;">
             <td></td>
             <td style="padding-left: 20px;"><em>Subtotal — Total Welfare Collections</em></td>
-            <td style="text-align: right;">₹${parseFloat(data.welfare_collections || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+            <td style="text-align: right;">₹${(parseFloat(data.welfare_collections || 0) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
             <td style="text-align: right; color: #888;">—</td>
           </tr>
         `
@@ -133,29 +141,29 @@ const PeriodReport = () => {
           <tr>
             <td style="text-align: center;">1</td>
             <td>Welfare Fund Collections (${data.welfare_count || 0} payments)</td>
-            <td style="text-align: right;">${parseFloat(data.welfare_collections || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+            <td style="text-align: right;">${(parseFloat(data.welfare_collections || 0) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
             <td style="text-align: right; color: #888;">—</td>
           </tr>
         `
       }
 
       let extraIncomeRows = ''
-      if (parseFloat(data.loan_interest_received || 0) > 0) {
+      if ((parseFloat(data.loan_interest_received || 0) || 0) > 0) {
         extraIncomeRows += `
           <tr>
             <td style="text-align: center;">3</td>
             <td>Loan Service Charges &amp; Interest Received</td>
-            <td style="text-align: right;">${parseFloat(data.loan_interest_received || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+            <td style="text-align: right;">${(parseFloat(data.loan_interest_received || 0) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
             <td style="text-align: right; color: #888;">—</td>
           </tr>
         `
       }
-      if (parseFloat(data.dues_collected || 0) > 0) {
+      if ((parseFloat(data.dues_collected || 0) || 0) > 0) {
         extraIncomeRows += `
           <tr>
             <td style="text-align: center;">7</td>
             <td>Standard Dues Collected</td>
-            <td style="text-align: right;">${parseFloat(data.dues_collected || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+            <td style="text-align: right;">${(parseFloat(data.dues_collected || 0) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
             <td style="text-align: right; color: #888;">—</td>
           </tr>
         `
@@ -163,14 +171,20 @@ const PeriodReport = () => {
 
       let expenseRows = ''
       if (expensesSummary.length > 0) {
-        expenseRows = expensesSummary.map((e, idx) => `
+        expenseRows = expensesSummary.map((e, idx) => {
+          const eAmt = parseFloat(e.total_amount ?? e.amount ?? 0) || 0
+          const eCount = (e.count !== undefined && e.count !== null && !isNaN(Number(e.count)))
+            ? ` (${e.count} vouchers)`
+            : ''
+          const eCat = e.category_name || (e.category ? e.category.replace(/_/g, ' ') : 'Expense')
+          return `
           <tr>
             <td style="text-align: center;">${idx + 1}</td>
-            <td style="padding-left: 20px; text-transform: capitalize;">Office Expense: <strong>${e.category.replace(/_/g, ' ')}</strong> (${e.count} vouchers)</td>
+            <td style="padding-left: 20px; text-transform: capitalize;">Office Expense: <strong>${eCat}</strong>${eCount}</td>
             <td style="text-align: right; color: #888;">—</td>
-            <td style="text-align: right;">${parseFloat(e.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+            <td style="text-align: right;">${eAmt.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
           </tr>
-        `).join('')
+        `}).join('')
       } else {
         expenseRows = `
           <tr>
@@ -237,26 +251,26 @@ const PeriodReport = () => {
                 <tr>
                   <td style="text-align: center;">2</td>
                   <td>Loan Repayments / EMI Principal Collections (${data.loan_repayment_count || 0} installments)</td>
-                  <td style="text-align: right;">${parseFloat(data.loan_repayments || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                  <td style="text-align: right;">${(parseFloat(data.loan_repayments || 0) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                   <td style="text-align: right; color: #888;">—</td>
                 </tr>
                 ${extraIncomeRows}
                 <tr>
                   <td style="text-align: center;">4</td>
                   <td>Masavari (Membership Subscription) Collections (${data.masavari_count || 0} payments)</td>
-                  <td style="text-align: right;">${parseFloat(data.masavari_collected || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                  <td style="text-align: right;">${(parseFloat(data.masavari_collected || 0) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                   <td style="text-align: right; color: #888;">—</td>
                 </tr>
                 <tr>
                   <td style="text-align: center;">5</td>
                   <td>Member Registration Fees &amp; Share Capital Deposits (${(data.deposits_list || []).length} items)</td>
-                  <td style="text-align: right;">${parseFloat(data.deposits_made || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                  <td style="text-align: right;">${(parseFloat(data.deposits_made || 0) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                   <td style="text-align: right; color: #888;">—</td>
                 </tr>
                 <tr>
                   <td style="text-align: center;">6</td>
                   <td>Welfare Auction Surcharges &amp; Miscellaneous Profits (${data.other_incomes_count || 0} items)</td>
-                  <td style="text-align: right;">${parseFloat(data.other_incomes || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                  <td style="text-align: right;">${(parseFloat(data.other_incomes || 0) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                   <td style="text-align: right; color: #888;">—</td>
                 </tr>
                 <tr class="total-row">
@@ -344,23 +358,23 @@ const PeriodReport = () => {
               </div>
               <div class="summary-card">
                 <div class="label">Welfare Collections</div>
-                <div class="value">₹${parseFloat(data.welfare_collections).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
+                <div class="value">₹${(parseFloat(data.welfare_collections || 0) || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
               </div>
               <div class="summary-card">
                 <div class="label">Loan Repayments</div>
-                <div class="value">₹${parseFloat(data.loan_repayments).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
+                <div class="value">₹${(parseFloat(data.loan_repayments || 0) || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
               </div>
               <div class="summary-card">
                 <div class="label">Masavari Collections</div>
-                <div class="value">₹${parseFloat(data.masavari_collected).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
+                <div class="value">₹${(parseFloat(data.masavari_collected || 0) || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
               </div>
               <div class="summary-card">
                 <div class="label">Registration Fees</div>
-                <div class="value">₹${parseFloat(data.deposits_made).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
+                <div class="value">₹${(parseFloat(data.deposits_made || 0) || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
               </div>
               <div class="summary-card">
                 <div class="label">Other Profits</div>
-                <div class="value">₹${parseFloat(data.other_incomes || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
+                <div class="value">₹${(parseFloat(data.other_incomes || 0) || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</div>
               </div>
               <div class="summary-card">
                 <div class="label">Total Expenses</div>
@@ -1074,20 +1088,29 @@ const CooperativeSummaryLedger = ({ data }) => {
               {/* Welfare Collections */}
               {welfareSummary.length > 0 ? (
                 <>
-                  {welfareSummary.map((w, idx) => (
-                    <tr key={`welfare-${w.chit_group_id || idx}`}>
-                      <td style={{ textAlign: 'center' }}>{`1.${idx + 1}`}</td>
-                      <td style={{ paddingLeft: 24 }}>
-                        Welfare Fund: <strong>{w.group_no}</strong> — {w.group_name} ({w.count} payments received)
-                      </td>
-                      <td style={{ textAlign: 'right' }}>{parseFloat(w.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-                      <td style={{ textAlign: 'right', color: '#94a3b8' }}>—</td>
-                    </tr>
-                  ))}
+                  {welfareSummary.map((w, idx) => {
+                    const wAmt = parseFloat(w.total_amount ?? w.amount ?? 0) || 0
+                    const wCount = (w.count !== undefined && w.count !== null && !isNaN(Number(w.count)))
+                      ? ` (${w.count} payments received)`
+                      : ''
+                    const wLabel = w.group_no
+                      ? <>Welfare Fund: <strong>{w.group_no}</strong> — {w.group_name || 'Scheme'}</>
+                      : <>Welfare Fund: <strong>{w.group_name || 'Scheme'}</strong></>
+                    return (
+                      <tr key={`welfare-${w.chit_group_id || w.group_no || idx}`}>
+                        <td style={{ textAlign: 'center' }}>{`1.${idx + 1}`}</td>
+                        <td style={{ paddingLeft: 24 }}>
+                          {wLabel}{wCount}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>{wAmt.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                        <td style={{ textAlign: 'right', color: '#94a3b8' }}>—</td>
+                      </tr>
+                    )
+                  })}
                   <tr className="subtotal-row">
                     <td></td>
                     <td style={{ paddingLeft: 24 }}><em>Subtotal — Total Welfare Collections</em></td>
-                    <td style={{ textAlign: 'right' }}><strong>₹{parseFloat(data.welfare_collections || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong></td>
+                    <td style={{ textAlign: 'right' }}><strong>₹{(parseFloat(data.welfare_collections || 0) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong></td>
                     <td style={{ textAlign: 'right', color: '#94a3b8' }}>—</td>
                   </tr>
                 </>
@@ -1095,7 +1118,7 @@ const CooperativeSummaryLedger = ({ data }) => {
                 <tr>
                   <td style={{ textAlign: 'center' }}>1</td>
                   <td>Welfare Fund Collections ({data.welfare_count || 0} payments)</td>
-                  <td style={{ textAlign: 'right' }}>{parseFloat(data.welfare_collections || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                  <td style={{ textAlign: 'right' }}>{(parseFloat(data.welfare_collections || 0) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                   <td style={{ textAlign: 'right', color: '#94a3b8' }}>—</td>
                 </tr>
               )}
@@ -1104,16 +1127,16 @@ const CooperativeSummaryLedger = ({ data }) => {
               <tr>
                 <td style={{ textAlign: 'center' }}>2</td>
                 <td>Loan Repayments / EMI Principal Collections ({data.loan_repayment_count || 0} installments)</td>
-                <td style={{ textAlign: 'right' }}>{parseFloat(data.loan_repayments || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                <td style={{ textAlign: 'right' }}>{(parseFloat(data.loan_repayments || 0) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                 <td style={{ textAlign: 'right', color: '#94a3b8' }}>—</td>
               </tr>
 
               {/* Loan Service Charge / Interest Received if tracked */}
-              {parseFloat(data.loan_interest_received || 0) > 0 && (
+              {(parseFloat(data.loan_interest_received || 0) || 0) > 0 && (
                 <tr>
                   <td style={{ textAlign: 'center' }}>3</td>
                   <td>Loan Service Charges &amp; Interest Received</td>
-                  <td style={{ textAlign: 'right' }}>{parseFloat(data.loan_interest_received || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                  <td style={{ textAlign: 'right' }}>{(parseFloat(data.loan_interest_received || 0) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                   <td style={{ textAlign: 'right', color: '#94a3b8' }}>—</td>
                 </tr>
               )}
@@ -1122,7 +1145,7 @@ const CooperativeSummaryLedger = ({ data }) => {
               <tr>
                 <td style={{ textAlign: 'center' }}>4</td>
                 <td>Masavari (Membership Subscription) Collections ({data.masavari_count || 0} payments)</td>
-                <td style={{ textAlign: 'right' }}>{parseFloat(data.masavari_collected || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                <td style={{ textAlign: 'right' }}>{(parseFloat(data.masavari_collected || 0) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                 <td style={{ textAlign: 'right', color: '#94a3b8' }}>—</td>
               </tr>
 
@@ -1130,7 +1153,7 @@ const CooperativeSummaryLedger = ({ data }) => {
               <tr>
                 <td style={{ textAlign: 'center' }}>5</td>
                 <td>Member Registration Fees &amp; Share Capital Deposits ({(data.deposits_list || []).length} items)</td>
-                <td style={{ textAlign: 'right' }}>{parseFloat(data.deposits_made || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                <td style={{ textAlign: 'right' }}>{(parseFloat(data.deposits_made || 0) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                 <td style={{ textAlign: 'right', color: '#94a3b8' }}>—</td>
               </tr>
 
@@ -1138,16 +1161,16 @@ const CooperativeSummaryLedger = ({ data }) => {
               <tr>
                 <td style={{ textAlign: 'center' }}>6</td>
                 <td>Welfare Auction Surcharges &amp; Miscellaneous Profits ({data.other_incomes_count || 0} items)</td>
-                <td style={{ textAlign: 'right' }}>{parseFloat(data.other_incomes || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                <td style={{ textAlign: 'right' }}>{(parseFloat(data.other_incomes || 0) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                 <td style={{ textAlign: 'right', color: '#94a3b8' }}>—</td>
               </tr>
 
               {/* Dues Collections */}
-              {parseFloat(data.dues_collected || 0) > 0 && (
+              {(parseFloat(data.dues_collected || 0) || 0) > 0 && (
                 <tr>
                   <td style={{ textAlign: 'center' }}>7</td>
                   <td>Standard Dues Collected</td>
-                  <td style={{ textAlign: 'right' }}>{parseFloat(data.dues_collected || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                  <td style={{ textAlign: 'right' }}>{(parseFloat(data.dues_collected || 0) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                   <td style={{ textAlign: 'right', color: '#94a3b8' }}>—</td>
                 </tr>
               )}
@@ -1169,16 +1192,23 @@ const CooperativeSummaryLedger = ({ data }) => {
               </tr>
 
               {expensesSummary.length > 0 ? (
-                expensesSummary.map((e, idx) => (
-                  <tr key={`exp-${e.category || idx}`}>
-                    <td style={{ textAlign: 'center' }}>{idx + 1}</td>
-                    <td style={{ paddingLeft: 24, textTransform: 'capitalize' }}>
-                      Office Expense: <strong>{e.category.replace(/_/g, ' ')}</strong> ({e.count} vouchers)
-                    </td>
-                    <td style={{ textAlign: 'right', color: '#94a3b8' }}>—</td>
-                    <td style={{ textAlign: 'right' }}>{parseFloat(e.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-                  </tr>
-                ))
+                expensesSummary.map((e, idx) => {
+                  const eAmt = parseFloat(e.total_amount ?? e.amount ?? 0) || 0
+                  const eCount = (e.count !== undefined && e.count !== null && !isNaN(Number(e.count)))
+                    ? ` (${e.count} vouchers)`
+                    : ''
+                  const eCat = e.category_name || (e.category ? e.category.replace(/_/g, ' ') : 'Expense')
+                  return (
+                    <tr key={`exp-${e.category || idx}`}>
+                      <td style={{ textAlign: 'center' }}>{idx + 1}</td>
+                      <td style={{ paddingLeft: 24, textTransform: 'capitalize' }}>
+                        Office Expense: <strong>{eCat}</strong>{eCount}
+                      </td>
+                      <td style={{ textAlign: 'right', color: '#94a3b8' }}>—</td>
+                      <td style={{ textAlign: 'right' }}>{eAmt.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                    </tr>
+                  )
+                })
               ) : (
                 <tr>
                   <td style={{ textAlign: 'center' }}>1</td>
